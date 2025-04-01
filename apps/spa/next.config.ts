@@ -2,6 +2,7 @@
 import generateWithBundleAnalyzer from '@next/bundle-analyzer';
 import { withSentryConfig } from '@sentry/nextjs';
 import { NextConfig } from 'next';
+import path from 'path';
 
 const withBundleAnalyzer = generateWithBundleAnalyzer({
   enabled: process.env.ANALYZE === 'true',
@@ -44,6 +45,9 @@ const config: NextConfig = {
     // https://github.com/vercel/next.js/issues/30434
     config.resolve.alias['@formatjs/icu-messageformat-parser'] =
       '@formatjs/icu-messageformat-parser/no-parser';
+
+    // 添加这一段来修复 findDOMNode 问题
+    config.resolve.alias['react-dom'] = path.resolve('./node_modules/react-dom');
 
     return config;
   },

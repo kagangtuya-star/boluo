@@ -6,6 +6,16 @@ import { useBannerNode } from '../../hooks/useBannerNode';
 import ReactDOM from 'react-dom';
 import { AlertCircle } from '@boluo/icons';
 
+// 添加 findDOMNode 兼容性补丁
+if (typeof ReactDOM.findDOMNode === 'undefined') {
+  ReactDOM.findDOMNode = function findDOMNode(component) {
+    return (
+      component &&
+      (component.nodeType === 1 ? component : ReactDOM.findDOMNode(component.render?.()))
+    );
+  };
+}
+
 interface Props {
   icon?: ReactNode;
   error?: unknown;
