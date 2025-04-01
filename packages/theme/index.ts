@@ -9,11 +9,11 @@ export const isTheme = (value: string): value is Theme =>
 
 const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
-const THEME_PREFIX = 'theme:';
+const THEME_PREFIX = 'theme-';
 const THEME_PREFIX_ENCODED = encodeURIComponent(THEME_PREFIX);
 
 export const toTheme = (value: string): Theme => {
-  if (value.startsWith('theme:')) {
+  if (value.startsWith('theme-')) {
     value = value.slice(THEME_PREFIX.length);
   } else if (value.startsWith(THEME_PREFIX_ENCODED)) {
     value = decodeURIComponent(value.slice(THEME_PREFIX_ENCODED.length));

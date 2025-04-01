@@ -21,10 +21,10 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 export async function generateViewport({ params }: { params: Promise<Params> }): Promise<Viewport> {
   const { theme } = await params;
   let colorScheme: Viewport['colorScheme'] = 'dark light';
-  if (theme === 'theme:dark') {
+  if (theme === 'theme-dark') {
     colorScheme = 'dark';
   }
-  if (theme === 'theme:light') {
+  if (theme === 'theme-light') {
     colorScheme = 'light';
   }
   return {
@@ -39,7 +39,7 @@ export default async function RootLayout({
   children: ReactNode;
   params: Promise<Params>;
 }) {
-  const { lang, theme: themeParam = 'theme:system' } = await params;
+  const { lang, theme: themeParam = 'theme-system' } = await params;
   const theme = toTheme(themeParam);
   const locale = toLocale(lang);
 
@@ -60,9 +60,9 @@ export default async function RootLayout({
 export function generateStaticParams() {
   const params: Array<{ lang: string; theme: string }> = [];
   for (const lang of LOCALES) {
-    params.push({ lang, theme: 'theme:light' });
-    params.push({ lang, theme: 'theme:dark' });
-    params.push({ lang, theme: 'theme:system' });
+    params.push({ lang, theme: 'theme-light' });
+    params.push({ lang, theme: 'theme-dark' });
+    params.push({ lang, theme: 'theme-system' });
   }
   return params;
 }
