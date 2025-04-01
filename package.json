@@ -6,8 +6,8 @@
     "turbo": "^2.4.4"
   },
   "optionalDependencies": {
-    "wrangler": "^4.6.0",
-    "syncpack": "^13.0.3"
+    "syncpack": "^13.0.3",
+    "wrangler": "^4.6.0"
   },
   "engines": {
     "node": ">=18"
@@ -35,5 +35,8 @@
     "apps/*",
     "packages/*",
     "apps/server/bindings"
-  ]
+  ],
+  "dependencies": {
+    "react-transition-group": "^4.4.5"
+  }
 }
