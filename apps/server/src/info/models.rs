@@ -148,9 +148,9 @@ impl AppSettings {
         let media_url = std::env::var("PUBLIC_MEDIA_URL")
             .unwrap_or_else(|_| "https://media.boluo.chat".to_string());
         let app_url =
-            std::env::var("APP_URL").unwrap_or_else(|_| "https://app.boluo.chat".to_string());
+            std::env::var("APP_URL").unwrap_or_else(|_| "https://boluo.kagangtuya.top".to_string());
         let site_url =
-            std::env::var("SITE_URL").unwrap_or_else(|_| "https://site.boluo.chat".to_string());
+            std::env::var("SITE_URL").unwrap_or_else(|_| "https://boluosite.kagangtuya.top".to_string());
         let sentry_dsn = std::env::var("SENTRY_DSN").ok();
         AppSettings {
             media_url,
