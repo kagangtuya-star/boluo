@@ -86,6 +86,8 @@ export const request = async <T>(
     headers,
     body,
     credentials: 'include',
+    mode: 'cors', // 明确指定cors模式
+    cache: 'no-cache', // 防止缓存问题
   });
   try {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
