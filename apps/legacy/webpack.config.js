@@ -64,33 +64,19 @@ module.exports = {
     static: {
       directory: path.resolve(__dirname, 'public'),
     },
-    proxy: {
-      '/api': {
-        target: process.env.BACKEND_URL || 'https://production.boluo.chat',
+    proxy: [
+      {
+        context: ['/api'],
+        target: process.env.BACKEND_URL || 'https://boluo-net.kagangtuya.top',
         secure: false,
         changeOrigin: true,
         ws: true,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-          'Access-Control-Allow-Headers': 'X-Requested-With, content-type, Authorization',
-        },
-        onProxyRes: function (proxyRes) {
-          // 添加CORS头
-          proxyRes.headers['Access-Control-Allow-Origin'] = '*';
-        },
       },
-    },
+    ],
     hot: true,
     compress: true,
     historyApiFallback: true,
     port: 3300,
-    // 添加以下配置，允许所有主机访问
-    allowedHosts: 'all',
-    // 禁用host检查
-    client: {
-      webSocketURL: 'auto://0.0.0.0:0/ws',
-    },
   },
 
   resolve: {
