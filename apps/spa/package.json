@@ -58,6 +58,7 @@
     "check-types": "tsc --noEmit",
     "dev": "next dev --port 3200",
     "lint": "eslint .",
-    "test": "jest"
+    "test": "jest",
+    "start": "npx serve@latest out -p 3200"
   }
 }
