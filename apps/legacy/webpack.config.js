@@ -11,6 +11,8 @@ const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
 const SpriteLoaderPlugin = require('svg-sprite-loader/plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+const CompressionPlugin = require('compression-webpack-plugin');
 
 const rootPath = path.resolve(__dirname);
 const PRODUCTION = process.env.NODE_ENV === 'production';
@@ -19,7 +21,7 @@ module.exports = {
   entry: './src/index.tsx',
 
   // https://webpack.js.org/configuration/devtool/
-  devtool: PRODUCTION ? 'source-map' : 'eval-cheap-module-source-map',
+  devtool: PRODUCTION ? false : 'source-map',
   mode: PRODUCTION ? 'production' : 'development',
 
   output: {
@@ -49,7 +51,13 @@ module.exports = {
       chunkFilename: '[id].[contenthash].css',
     }),
     new SpriteLoaderPlugin(),
-    // new require('webpack-bundle-analyzer').BundleAnalyzerPlugin,
+    ...(process.env.ANALYZE ? [new BundleAnalyzerPlugin()] : []),
+    new CompressionPlugin({
+      algorithm: 'gzip',
+      test: /\.(js|css|html|svg)$/,
+      threshold: 10240,
+      minRatio: 0.8,
+    }),
   ],
 
   devServer: {
@@ -102,11 +110,57 @@ module.exports = {
   },
 
   optimization: {
-    minimize: PRODUCTION,
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        terserOptions: {
+          parse: {
+            ecma: 8,
+          },
+          compress: {
+            ecma: 5,
+            warnings: false,
+            comparisons: false,
+            inline: 2,
+          },
+          mangle: {
+            safari10: true,
+          },
+          output: {
+            ecma: 5,
+            comments: false,
+            ascii_only: true,
+          },
+        },
+        parallel: true,
+      }),
+      new CssMinimizerPlugin(),
+    ],
     splitChunks: {
       chunks: 'all',
-      minSize: 1000000,
+      maxInitialRequests: Infinity,
+      minSize: 20000,
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name(module) {
+            const packageName = module.context.match(/[\\/]node_modules[\\/](.*?)([\\/]|$)/)[1];
+            return `npm.${packageName.replace('@', '')}`;
+          },
+        },
+        react: {
+          test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-redux)[\\/]/,
+          name: 'react-vendor',
+          priority: 20,
+        },
+      },
     },
-    minimizer: [new TerserPlugin(), new CssMinimizerPlugin()],
+    runtimeChunk: 'single',
+  },
+
+  performance: {
+    hints: PRODUCTION ? 'warning' : false,
+    maxAssetSize: 300000,
+    maxEntrypointSize: 500000,
   },
 };
