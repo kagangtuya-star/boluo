@@ -64,7 +64,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "set NODE_ENV=production webpack --config webpack.config.js",
+    "build": "set NODE_ENV=production && webpack --config webpack.config.js",
     "check-types": "tsc --project tsconfig.json",
     "dev": "webpack-dev-server --color --output-public-path / --progress --port 3300"
   }
