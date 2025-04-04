@@ -1,15 +1,13 @@
 import { get } from '@boluo/api-browser';
-import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { useSWRConfig } from 'swr';
 
-export const useLogout = () => {
-  const router = useRouter();
+export function useLogout(): () => void {
   const { mutate } = useSWRConfig();
-
   return useCallback(async () => {
     await get('/users/logout', null);
-    await mutate(['/users/query', null], null);
-    router.refresh();
-  }, [mutate, router]);
-};
+    localStorage.clear();
+    sessionStorage.clear();
+    await mutate(() => true, undefined, { revalidate: true });
+  }, [mutate]);
+}
