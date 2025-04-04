@@ -1,7 +1,6 @@
 {
   "name": "spa",
   "version": "0.0.0",
-  "type": "module",
   "dependencies": {
     "@boluo/api": "*",
     "@boluo/api-browser": "*",
@@ -60,5 +59,6 @@
     "lint": "eslint .",
     "test": "jest",
     "start": "npx serve@latest out -p 3200"
-  }
+  },
+  "type": "module"
 }

@@ -51,9 +51,9 @@
     "webpack": "^5.98.0"
   },
   "optionalDependencies": {
-    "@opennextjs/cloudflare": "^0.6.5"
+    "@opennextjs/cloudflare": "^1.0.0-beta.0"
   },
-  "homepage": "https://github.com/mythal/boluo-mono",
+  "homepage": "https://github.com/mythal/boluo",
   "license": "GPL-3.0",
   "scripts": {
     "build": "next build",
