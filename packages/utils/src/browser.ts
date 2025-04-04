@@ -46,7 +46,15 @@ export const isCrossOrigin = () => {
   ) {
     return true;
   }
-  if (hostname.endsWith('.boluo-legacy.pages.dev')) {
+  const ends = ['.boluo-legacy.pages.dev', '.boluo-app.pages.dev', '.mythal.workers.dev', ''];
+  if (ends.some((x) => hostname.endsWith(x))) {
+    return true;
+  }
+  // 根域名通配符匹配
+  const rootDomains = ['boluo.app', 'mythal.net']; // 添加你需要的根域名
+  if (
+    rootDomains.some((rootDomain) => hostname === rootDomain || hostname.endsWith('.' + rootDomain))
+  ) {
     return true;
   }
   return false;
