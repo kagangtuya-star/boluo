@@ -57,5 +57,6 @@ export const isCrossOrigin = () => {
   ) {
     return true;
   }
+
   return false;
 };

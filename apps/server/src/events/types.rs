@@ -3,13 +3,11 @@ use crate::channels::Channel;
 
 use crate::events::context;
 use crate::events::context::SyncEvent;
+use crate::events::models::{space_users_status, StatusKind, UserStatus};
 use crate::events::preview::{Preview, PreviewPost};
 use crate::messages::Message;
-use crate::redis;
 use crate::spaces::api::SpaceWithRelated;
-use crate::spaces::models::{space_users_status, StatusKind, UserStatus};
 use chrono::Utc;
-use deadpool_redis::redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -208,18 +206,17 @@ impl Event {
             mailbox,
         );
     }
-    pub async fn push_status(
-        redis: &mut deadpool_redis::Connection,
-        space_id: Uuid,
-    ) -> Result<(), anyhow::Error> {
-        let status_map = space_users_status(redis, space_id).await?;
-        Event::transient(
-            space_id,
-            EventBody::StatusMap {
-                status_map,
+    pub async fn push_status(space_id: Uuid) -> Result<(), anyhow::Error> {
+        let status_map = space_users_status(space_id).await;
+        if let Some(status_map) = status_map {
+            Event::transient(
                 space_id,
-            },
-        );
+                EventBody::StatusMap {
+                    status_map,
+                    space_id,
+                },
+            );
+        }
         Ok(())
     }
 
@@ -230,28 +227,35 @@ impl Event {
         timestamp: i64,
         focus: Vec<Uuid>,
     ) -> Result<(), anyhow::Error> {
-        let mut redis = redis::conn().await;
         let heartbeat = UserStatus {
             timestamp,
             kind,
             focus,
         };
-        let mut changed = true;
 
-        let key = redis::make_key(b"space", &space_id, b"heartbeat");
-        let old_value: Option<Result<UserStatus, _>> = redis
-            .hget::<_, _, Option<Vec<u8>>>(&*key, user_id.as_bytes())
-            .await?
-            .as_deref()
-            .map(serde_json::from_slice);
-        if let Some(Ok(old_value)) = old_value {
-            changed = old_value.kind != kind;
-        }
-        let value = serde_json::to_vec(&heartbeat)?;
+        let Some(mailbox) = super::context::get_cache().try_mailbox(&space_id).await else {
+            log::warn!(
+                "Failed to get mailbox for space {} on update status",
+                space_id
+            );
+            return Ok(());
+        };
+        let Ok(mut mailbox) = mailbox.try_lock() else {
+            log::warn!(
+                "Failed to lock mailbox for space {} on update status",
+                space_id
+            );
+            return Ok(());
+        };
 
-        let created: bool = redis.hset(&*key, user_id.as_bytes(), &*value).await?;
-        if created || changed {
-            Event::push_status(&mut redis, space_id).await?;
+        let old_value = mailbox.status.insert(user_id, heartbeat);
+        drop(mailbox);
+        if let Some(old_value) = old_value {
+            if old_value.kind != kind {
+                Event::push_status(space_id).await?;
+            }
+        } else {
+            Event::push_status(space_id).await?;
         }
         Ok(())
     }
@@ -276,10 +280,6 @@ impl Event {
         )
     }
 
-    pub fn cache_key(mailbox: &Uuid) -> Vec<u8> {
-        redis::make_key(b"mailbox", mailbox, b"events")
-    }
-
     pub async fn get_from_cache(
         mailbox: &Uuid,
         after: Option<i64>,
@@ -287,17 +287,19 @@ impl Event {
     ) -> Vec<String> {
         use std::cmp::Ordering;
         let after = after.unwrap_or(i64::MIN);
-        let redis = super::context::get_cache().try_mailbox(mailbox).await;
-        let Some(redis) = redis else { return vec![] };
-        let redis = redis.lock().await;
-        let mut event_list: Vec<Arc<SyncEvent>> = redis
+        let mailbox = super::context::get_cache().try_mailbox(mailbox).await;
+        let Some(mailbox) = mailbox else {
+            return vec![];
+        };
+        let mailbox_state = mailbox.lock().await;
+        let mut event_list: Vec<Arc<SyncEvent>> = mailbox_state
             .events
             .iter()
-            .chain(redis.edition_map.values())
-            .chain(redis.preview_map.values())
+            .chain(mailbox_state.edition_map.values())
+            .chain(mailbox_state.preview_map.values())
             .cloned()
             .collect();
-        drop(redis);
+        drop(mailbox_state);
         if event_list.is_empty() {
             return vec![];
         }
@@ -371,8 +373,8 @@ impl Event {
     }
 
     async fn async_fire(body: EventBody, mailbox: Uuid) {
-        let redis = super::context::get_cache().mailbox(&mailbox).await;
-        let mut redis = redis.lock().await;
+        let mailbox_lock = super::context::get_cache().mailbox(&mailbox).await;
+        let mut mailbox_state = mailbox_lock.lock().await;
 
         enum Kind {
             Preview { channel_id: Uuid, sender_id: Uuid },
@@ -414,15 +416,15 @@ impl Event {
                 sender_id,
                 channel_id,
             } => {
-                redis
+                mailbox_state
                     .preview_map
                     .insert((sender_id, channel_id), event.clone());
             }
             Kind::Edition { message_id } => {
-                redis.edition_map.insert(message_id, event.clone());
+                mailbox_state.edition_map.insert(message_id, event.clone());
             }
             Kind::Cache => {
-                redis.events.push_back(event.clone());
+                mailbox_state.events.push_back(event.clone());
             }
             Kind::NoCache => {}
         }
