@@ -94,6 +94,7 @@ export const ChatItemMessage: FC<{
         data-read-position={message.pos}
         data-is-last={isLast}
       >
+        {media}
         {message.whisperToUsers != null && (
           <span className="text-surface-600 text-sm italic">
             <FormattedMessage defaultMessage="(Whisper)" />
@@ -122,7 +123,6 @@ export const ChatItemMessage: FC<{
             />
           </div>
         )}
-        {media}
       </div>
     </MessageBox>
   );
