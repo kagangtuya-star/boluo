@@ -17,7 +17,7 @@ interface S3Error {
 export const makeMeidaPublicUrl = (raw: unknown) => {
   if (typeof raw !== 'string' || raw === '') {
     // 使用默认值而不是抛出错误
-    console.warn('Using default media URL because none was provided');
+    // console.warn('Using default media URL because none was provided');
     raw = DEFAULT_MEDIA_URL;
   }
   let url = raw as string;
