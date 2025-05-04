@@ -34,10 +34,10 @@ mod mail;
 mod media;
 mod messages;
 mod pos;
-mod redis;
 mod s3;
 mod session;
 mod spaces;
+mod ts;
 mod users;
 mod validators;
 mod websocket;
@@ -45,12 +45,9 @@ mod websocket;
 use crate::cors::allow_origin;
 use crate::error::AppError;
 use crate::interface::{err_response, missing, ok_response};
-#[cfg(not(target_env = "msvc"))]
-use tikv_jemallocator::Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError> {
     let path = req.uri().path().to_string();
@@ -141,6 +138,8 @@ async fn storage_check() {
 struct Args {
     #[clap(long, help = "check only", default_value = "false")]
     check: bool,
+    #[clap(long, help = "export typescript types", default_value = "false")]
+    types: bool,
 }
 
 #[tokio::main]
@@ -150,9 +149,13 @@ async fn main() {
     logger::setup_logger(debug()).unwrap();
 
     let args = Args::parse();
+    if args.types {
+        ts::export();
+        return;
+    }
 
     let port: u16 = env::var("PORT")
-        .expect("PORT must be set")
+        .unwrap_or("3000".to_string())
         .parse()
         .expect("PORT must be a number");
     storage_check().await;
@@ -166,9 +169,6 @@ async fn main() {
     let listener = TcpListener::bind(addr)
         .await
         .expect("Failed to bind address");
-
-    redis::check().await;
-    log::info!("Cache is ready");
     db::check().await;
     log::info!("Database is ready");
 

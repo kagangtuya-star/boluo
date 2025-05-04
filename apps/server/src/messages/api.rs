@@ -1,10 +1,9 @@
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
-use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+use super::models::Entities;
+
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NewMessage {
     pub message_id: Option<Uuid>,
@@ -12,8 +11,7 @@ pub struct NewMessage {
     pub channel_id: Uuid,
     pub name: String,
     pub text: String,
-    #[ts(type = "Array<unknown>")]
-    pub entities: Vec<JsonValue>,
+    pub entities: Entities,
     pub in_game: bool,
     pub is_action: bool,
     pub media_id: Option<Uuid>,
@@ -23,15 +21,13 @@ pub struct NewMessage {
     pub color: String,
 }
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EditMessage {
     pub message_id: Uuid,
     pub name: String,
     pub text: String,
-    #[ts(type = "Array<unknown>")]
-    pub entities: Vec<JsonValue>,
+    pub entities: Entities,
     pub in_game: bool,
     pub is_action: bool,
     pub media_id: Option<Uuid>,
@@ -39,16 +35,14 @@ pub struct EditMessage {
     pub color: String,
 }
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MessageMoveToMode {
     Top,
     Bottom,
 }
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveMessageBetween {
     pub message_id: Uuid,
@@ -57,12 +51,10 @@ pub struct MoveMessageBetween {
     pub channel_id: Uuid,
 }
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GetMessagesByChannel {
     pub channel_id: Uuid,
     pub before: Option<f64>,
-    #[ts(type = "number | null")]
     pub limit: Option<i64>,
 }

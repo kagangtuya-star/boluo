@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::db;
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Proxy {
     pub name: String,
@@ -12,8 +10,7 @@ pub struct Proxy {
     pub region: String,
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct DiskInfo {
     pub name: String,
     pub mount_point: String,
@@ -21,8 +18,7 @@ pub struct DiskInfo {
     pub total: u64,
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct HealthCheck {
     pub timestamp_sec: u64,
     pub disks: Vec<DiskInfo>,
@@ -32,8 +28,7 @@ pub struct HealthCheck {
     pub database: CheckResult<ConnectionState>,
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(tag = "type")]
 pub enum CheckResult<T> {
     Ok { value: T },
@@ -42,7 +37,7 @@ pub enum CheckResult<T> {
 
 impl<T> From<Result<T, String>> for CheckResult<T>
 where
-    T: Serialize + Clone + TS + std::fmt::Debug,
+    T: Serialize + Clone + specta::Type + std::fmt::Debug,
 {
     fn from(result: Result<T, String>) -> Self {
         match result {
@@ -52,39 +47,42 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct ConnectionState {
     rtt_ms: u64,
     /// Connection count in the pool.
     ///
     /// Always 1 if the connection is not pooled.
     count: usize,
+    idle: usize,
 }
 
 impl ConnectionState {
-    pub async fn cache() -> Result<ConnectionState, String> {
-        pub use deadpool_redis::redis::AsyncCommands;
-        let start = std::time::Instant::now();
-        let mut conn = crate::redis::conn().await;
-        let _redis_result: bool = conn
-            .set(b"health_check", b"ok")
-            .await
-            .map_err(|err| format!("Failed to set health_check to cache: {:?}", err))?;
-        let rtt_ms = start.elapsed().as_millis() as u64;
-        Ok(ConnectionState { rtt_ms, count: 1 })
-    }
-
     pub async fn database() -> Result<ConnectionState, String> {
         let start = std::time::Instant::now();
         let pool = db::get().await;
         let count = pool.size() as usize;
-        sqlx::query!("SELECT 1 as x;")
-            .fetch_one(&pool)
-            .await
-            .map_err(|err| format!("Failed to query database: {:?}", err))?;
+        let idle = pool.num_idle();
+
+        {
+            let mut conn: sqlx::pool::PoolConnection<sqlx::Postgres> = pool
+                .acquire()
+                .await
+                .map_err(|err| format!("Failed to acquire connection: {:?}", err))?;
+            let record = sqlx::query!("SELECT 42 as x;")
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(|err| format!("Failed to query database: {:?}", err))?;
+            if record.x != Some(42) {
+                return Err("Database query failed".to_string());
+            }
+        }
         let rtt_ms = start.elapsed().as_millis() as u64;
-        Ok(ConnectionState { rtt_ms, count })
+        Ok(ConnectionState {
+            rtt_ms,
+            count,
+            idle,
+        })
     }
 }
 
@@ -92,7 +90,13 @@ impl HealthCheck {
     pub async fn new() -> HealthCheck {
         use sysinfo::{Disks, System};
         let mut system = System::new();
-        let cache = ConnectionState::cache().await.into();
+        let cache = CheckResult::Ok {
+            value: ConnectionState {
+                rtt_ms: 0,
+                count: 1,
+                idle: 0,
+            },
+        };
         let database = ConnectionState::database().await.into();
         system.refresh_memory();
         let disks = Disks::new_with_refreshed_list();
@@ -120,8 +124,7 @@ impl HealthCheck {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct BasicInfo {
     pub version: String,
 }
@@ -133,8 +136,7 @@ impl BasicInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub media_url: String,

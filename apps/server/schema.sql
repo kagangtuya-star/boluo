@@ -15,6 +15,11 @@ DECLARE
     ph integer := 1;
     qh integer := 0;
 BEGIN
+    IF p1::bigint * q2 = p2::bigint * q1 THEN
+        p := p1;
+        q := q1;
+        RETURN;
+    END IF;
     IF (p1::bigint * q2 + 1) <> (p2::bigint * q1) THEN
         LOOP
             p := pl + ph;
@@ -199,3 +204,19 @@ CREATE TABLE events (
     "created" timestamptz NOT NULL DEFAULT (now() at time zone 'utc')
 );
 
+CREATE TABLE user_sessions (
+    "id" uuid NOT NULL DEFAULT uuid_generate_v4 () PRIMARY KEY,
+    "user_id" uuid NOT NULL CONSTRAINT "session_user" REFERENCES users (id) ON DELETE CASCADE,
+    "active" boolean NOT NULL DEFAULT TRUE,
+    "created" timestamptz NOT NULL DEFAULT (now() at time zone 'utc'),
+    "latest_activity" timestamptz NOT NULL DEFAULT (now() at time zone 'utc')
+);
+
+CREATE TABLE reset_tokens (
+    "token" uuid NOT NULL DEFAULT uuid_generate_v4 () PRIMARY KEY,
+    "user_id" uuid NOT NULL CONSTRAINT "password_reset_user" REFERENCES users (id) ON DELETE CASCADE,
+    "created" timestamptz NOT NULL DEFAULT (now() at time zone 'utc'),
+    "used_at" timestamptz DEFAULT NULL,
+    "invalidated_at" timestamptz DEFAULT NULL
+);
+CREATE INDEX "reset_token_user" ON reset_tokens (user_id);

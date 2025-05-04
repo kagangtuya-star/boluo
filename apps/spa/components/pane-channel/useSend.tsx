@@ -1,4 +1,4 @@
-import { type NewMessage, type User, type EditMessage } from '@boluo/api';
+import { type NewMessage, type User, type EditMessage, JsonValue } from '@boluo/api';
 import { patch, post } from '@boluo/api-browser';
 import { useStore } from 'jotai';
 import { useCallback, useMemo, useRef } from 'react';

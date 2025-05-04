@@ -1,16 +1,14 @@
 use crate::channels::ChannelMember;
 use crate::db;
 use crate::error::AppError;
-use crate::events::Event;
-use crate::{error::Find, redis};
+use crate::error::Find;
+use crate::events::Update;
+use crate::messages::Entities;
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
     pub id: Uuid,
@@ -25,15 +23,13 @@ pub struct Preview {
     pub clear: bool,
     pub text: Option<String>,
     pub whisper_to_users: Option<Vec<Uuid>>,
-    #[ts(type = "Array<unknown>")]
-    pub entities: Vec<JsonValue>,
+    pub entities: Entities,
     pub pos: f64,
     pub edit_for: Option<DateTime<Utc>>,
     pub edit: Option<PreviewEdit>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewEdit {
     pub time: DateTime<Utc>,
@@ -41,8 +37,7 @@ pub struct PreviewEdit {
     pub q: i32,
 }
 
-#[derive(Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Deserialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewPost {
     pub id: Uuid,
@@ -54,8 +49,7 @@ pub struct PreviewPost {
     pub text: Option<String>,
     #[serde(default)]
     pub clear: bool,
-    #[ts(type = "Array<unknown>")]
-    pub entities: Vec<JsonValue>,
+    pub entities: Entities,
     #[serde(default)]
     pub edit_for: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -79,23 +73,23 @@ impl PreviewPost {
         } = self;
         let pool = db::get().await;
         let mut conn = pool.acquire().await?;
-        let mut redis_conn = redis::conn().await;
-        let redis_conn = &mut redis_conn;
-        let mut should_finish = false;
+        let mut should_clear = false;
         if let Some(text) = text.as_ref() {
-            if (text.trim().is_empty() || entities.is_empty()) && edit_for.is_none() {
-                should_finish = true;
+            if (text.trim().is_empty() || entities.0.is_empty()) && edit_for.is_none() {
+                should_clear = true;
             }
         }
         let muted = text.is_none();
-        let mut start = 0.0;
+        let mut pos = 0.0;
         if let Some(PreviewEdit { p, q, time }) = edit {
-            start = p as f64 / q as f64;
+            pos = p as f64 / q as f64;
             edit_for = Some(time);
-        } else if edit_for.is_none() && !should_finish {
-            let keep_seconds = if muted { 8 } else { 60 * 3 };
-            start =
-                crate::pos::pos(&mut conn, redis_conn, channel_id, id, keep_seconds).await? as f64;
+        } else if edit_for.is_none() && !should_clear {
+            let timeout = if muted { 8 } else { 60 * 3 };
+            let pos_ratio = crate::pos::CHANNEL_POS_MAP
+                .preview_pos(&mut conn, channel_id, id, timeout)
+                .await?;
+            pos = (*pos_ratio.numer() as f64 / *pos_ratio.denom() as f64).ceil();
         }
         let is_master = ChannelMember::get(&mut *conn, user_id, space_id, channel_id)
             .await
@@ -117,14 +111,14 @@ impl PreviewPost {
             is_master,
             edit_for,
             clear,
-            pos: start,
+            pos,
             edit,
         });
 
-        if should_finish {
-            crate::pos::finished(redis_conn, channel_id, id).await?;
+        if should_clear {
+            crate::pos::CHANNEL_POS_MAP.cancelled(channel_id, id);
         }
-        Event::message_preview(space_id, preview);
+        Update::message_preview(space_id, preview);
         Ok(())
     }
 }

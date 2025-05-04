@@ -1,13 +1,13 @@
 use chrono::prelude::*;
 use quick_cache::sync::Cache;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::cache::CacheItem;
 use crate::channels::api::{ChannelMemberWithUser, ChannelWithMaybeMember, ChannelWithMember};
 use crate::db;
 use crate::error::{row_not_found, ModelError};
+use crate::events::context::StateError;
 use crate::spaces::{Space, SpaceMember};
 use crate::users::User;
 use crate::utils::merge_blank;
@@ -15,9 +15,18 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, TS, sqlx::Type,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    specta::Type,
+    sqlx::Type,
 )]
-#[ts(export)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum ChannelType {
@@ -36,9 +45,8 @@ impl ChannelType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, sqlx::Type)]
 #[sqlx(type_name = "channels")]
-#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
     pub id: Uuid,
@@ -209,8 +217,11 @@ impl Channel {
             .map(|r| r.rows_affected())?;
         if affected > 0 {
             CHANNEL_CACHE.remove(id);
-            if let Some(cache) = crate::events::context::get_cache().try_mailbox(id).await {
-                cache.lock().await.remove_channel(id);
+            let map = crate::events::context::store().mailboxes.pin();
+            if let Some(mailbox_state) = map.get(id) {
+                if let Err(StateError::TimeOut) = mailbox_state.remove_channel(*id) {
+                    log::warn!("Failed to remove channel from mailbox state");
+                }
             }
         }
 
@@ -257,18 +268,6 @@ impl Channel {
         .map_err(Into::into)
     }
 
-    pub async fn max_pos<'c, T: sqlx::PgExecutor<'c>>(
-        db: T,
-    ) -> Result<Vec<(Uuid, f64)>, sqlx::Error> {
-        let rows = sqlx::query_file!("sql/channels/channel_max_pos.sql")
-            .fetch_all(db)
-            .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| (row.channel_id, row.max_pos))
-            .collect())
-    }
-
     pub async fn get_by_user(
         db: &mut sqlx::PgConnection,
         user_id: Uuid,
@@ -289,52 +288,17 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type, sqlx::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelMember {
     pub user_id: Uuid,
     pub channel_id: Uuid,
     pub join_date: DateTime<Utc>,
     pub character_name: String,
-    pub is_master: bool,
     pub text_color: Option<String>,
     #[serde(skip)]
     pub is_joined: bool,
-}
-
-impl<'r> ::sqlx::decode::Decode<'r, ::sqlx::Postgres> for ChannelMember {
-    fn decode(
-        value: ::sqlx::postgres::PgValueRef<'r>,
-    ) -> ::std::result::Result<
-        Self,
-        ::std::boxed::Box<
-            dyn ::std::error::Error + 'static + ::std::marker::Send + ::std::marker::Sync,
-        >,
-    > {
-        let mut decoder = ::sqlx::postgres::types::PgRecordDecoder::new(value)?;
-        let user_id = decoder.try_decode::<Uuid>()?;
-        let channel_id = decoder.try_decode::<Uuid>()?;
-        let join_date = decoder.try_decode::<DateTime<Utc>>()?;
-        let character_name = decoder.try_decode::<String>()?;
-        let text_color = decoder.try_decode::<Option<String>>()?;
-        let is_joined = decoder.try_decode::<bool>()?;
-        let is_master = decoder.try_decode::<bool>()?;
-        ::std::result::Result::Ok(ChannelMember {
-            user_id,
-            channel_id,
-            join_date,
-            character_name,
-            is_master,
-            text_color,
-            is_joined,
-        })
-    }
-}
-impl ::sqlx::Type<::sqlx::Postgres> for ChannelMember {
-    fn type_info() -> ::sqlx::postgres::PgTypeInfo {
-        ::sqlx::postgres::PgTypeInfo::with_name("channel_members")
-    }
+    pub is_master: bool,
 }
 
 /// Avoid to read values from this cache.
@@ -422,20 +386,14 @@ impl ChannelMember {
 
     pub async fn is_master<'c, T: sqlx::PgExecutor<'c>>(
         db: T,
-        user_id: &Uuid,
-        channel_id: &Uuid,
-        space_id: &Uuid,
+        user_id: Uuid,
+        channel_id: Uuid,
+        space_id: Uuid,
     ) -> Result<bool, sqlx::Error> {
-        if let Some(cache) = crate::events::context::get_cache()
-            .try_mailbox(space_id)
-            .await
-        {
-            if let Ok(mut cache) = cache.try_lock() {
-                if let Some(members) = cache.members.get_mut(channel_id) {
-                    if let Some(member) = members.map.get(user_id) {
-                        return Ok(member.channel.is_master);
-                    }
-                }
+        let map = crate::events::context::store().mailboxes.pin();
+        if let Some(mailbox_state) = map.get(&space_id) {
+            if let Ok(is_master) = mailbox_state.is_master(channel_id, user_id) {
+                return Ok(is_master);
             }
         }
         sqlx::query_file_scalar!("sql/channels/is_master.sql", user_id, channel_id)
@@ -445,19 +403,15 @@ impl ChannelMember {
 
     pub async fn get_with_space_member<'c, T: sqlx::PgExecutor<'c>>(
         db: T,
-        user_id: &Uuid,
-        channel_id: &Uuid,
+        user_id: Uuid,
+        channel_id: Uuid,
         space_id: &Uuid,
     ) -> Result<Option<(ChannelMember, SpaceMember)>, sqlx::Error> {
-        if let Some(cache) = crate::events::context::get_cache()
-            .try_mailbox(space_id)
-            .await
         {
-            if let Ok(mut cache) = cache.try_lock() {
-                if let Some(members) = cache.members.get_mut(channel_id) {
-                    if let Some(member) = members.map.get(user_id) {
-                        return Ok(Some((member.channel.clone(), member.space.clone())));
-                    }
+            let map = crate::events::context::store().mailboxes.pin();
+            if let Some(mailbox_state) = map.get(space_id) {
+                if let Ok(member) = mailbox_state.get_member(channel_id, user_id) {
+                    return Ok(Some((member.channel.clone(), member.space.clone())));
                 }
             }
         }
@@ -477,33 +431,22 @@ impl ChannelMember {
         space_id: Uuid,
         channel_id: Uuid,
     ) -> Result<Option<ChannelMember>, sqlx::Error> {
-        if let Some(cache) = crate::events::context::get_cache()
-            .try_mailbox(&space_id)
-            .await
         {
-            if let Ok(mut cache) = cache.try_lock() {
-                if let Some(members) = cache.members.get_mut(&channel_id) {
-                    if let Some(member) = members.map.get(&user_id) {
-                        return Ok(Some(member.channel.clone()));
-                    }
+            let map = crate::events::context::store().mailboxes.pin();
+            if let Some(mailbox_state) = map.get(&space_id) {
+                if let Ok(member) = mailbox_state.get_member(channel_id, user_id) {
+                    return Ok(Some(member.channel));
                 }
             }
         }
-        ChannelMember::get_from_db(db, user_id, space_id, channel_id).await
-    }
-
-    pub async fn get_from_db<'c, T: sqlx::PgExecutor<'c>>(
-        db: T,
-        user_id: Uuid,
-        space_id: Uuid,
-        channel_id: Uuid,
-    ) -> Result<Option<ChannelMember>, sqlx::Error> {
-        let channel_member =
-            sqlx::query_file_scalar!("sql/channels/get_channel_member.sql", &user_id, &channel_id)
-                .fetch_optional(db)
-                .await?;
-        Member::load_to_cache(space_id, channel_id);
-        Ok(channel_member)
+        Member::get_by_channel(db, space_id, channel_id)
+            .await
+            .map(|members| {
+                members
+                    .into_iter()
+                    .map(|member| member.channel)
+                    .find(|member| member.user_id == user_id)
+            })
     }
 
     pub async fn remove_user<'c, T: sqlx::PgExecutor<'c>>(
@@ -524,14 +467,9 @@ impl ChannelMember {
         }
         tokio::spawn(async move {
             USER_ALL_CHANNEL_MEMBER_CACHE.remove(&user_id);
-            if let Some(cache) = crate::events::context::get_cache()
-                .try_mailbox(&space_id)
-                .await
-            {
-                cache
-                    .lock()
-                    .await
-                    .remove_member_from_channel(&channel_id, &user_id);
+            let map = crate::events::context::store().mailboxes.pin();
+            if let Some(mailbox_state) = map.get(&space_id) {
+                mailbox_state.remove_member_from_channel(channel_id, user_id);
             }
         });
         Ok(())
@@ -549,11 +487,9 @@ impl ChannelMember {
 
         tokio::spawn(async move {
             USER_ALL_CHANNEL_MEMBER_CACHE.remove(&user_id);
-            if let Some(cache) = crate::events::context::get_cache()
-                .try_mailbox(&space_id)
-                .await
-            {
-                cache.lock().await.remove_member(&user_id);
+            let map = crate::events::context::store().mailboxes.pin();
+            if let Some(mailbox_state) = map.get(&space_id) {
+                mailbox_state.remove_member(&user_id);
             }
         });
         Ok(ids)
@@ -590,11 +526,9 @@ impl ChannelMember {
         USER_ALL_CHANNEL_MEMBER_CACHE.remove(&user_id);
         if let Some(channel_member) = channel_member.clone() {
             tokio::spawn(async move {
-                if let Some(cache) = crate::events::context::get_cache()
-                    .try_mailbox(&space_id)
-                    .await
-                {
-                    cache.lock().await.update_channel_member(channel_member);
+                let map = crate::events::context::store().mailboxes.pin();
+                if let Some(mailbox_state) = map.get(&space_id) {
+                    mailbox_state.update_channel_member(channel_member);
                 }
             });
         }
@@ -634,6 +568,7 @@ impl ChannelMember {
         db: T,
         user_id: &Uuid,
         channel_id: &Uuid,
+        space_id: Uuid,
         is_master: bool,
     ) -> Result<Option<ChannelMember>, sqlx::Error> {
         let channel_member = sqlx::query_file_scalar!(
@@ -647,11 +582,9 @@ impl ChannelMember {
         if let Some(channel_member) = channel_member.clone() {
             USER_ALL_CHANNEL_MEMBER_CACHE.remove(&channel_member.user_id);
             tokio::spawn(async move {
-                if let Some(cache) = crate::events::context::get_cache()
-                    .try_mailbox(&channel_member.channel_id)
-                    .await
-                {
-                    cache.lock().await.update_channel_member(channel_member);
+                let map = crate::events::context::store().mailboxes.pin();
+                if let Some(mailbox_state) = map.get(&space_id) {
+                    mailbox_state.update_channel_member(channel_member);
                 }
             });
         }
@@ -659,8 +592,7 @@ impl ChannelMember {
     }
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
     pub channel: ChannelMember,
@@ -673,11 +605,13 @@ impl Member {
         space_id: Uuid,
         channel_id: Uuid,
     ) -> Result<Vec<Member>, sqlx::Error> {
-        let cache = crate::events::context::get_cache();
-        if let Some(cache) = cache.try_mailbox(&space_id).await {
-            if let Ok(mut cache) = cache.try_lock() {
-                if let Some(members) = cache.members.get_mut(&channel_id) {
-                    return Ok(members.map.values().cloned().collect());
+        let store = crate::events::context::store();
+        {
+            let map = store.mailboxes.pin();
+            if let Some(mailbox_state) = map.get(&space_id) {
+                let members = mailbox_state.get_members_in_channel(channel_id);
+                if !members.is_empty() {
+                    return Ok(members);
                 }
             }
         }
@@ -696,33 +630,15 @@ impl Member {
         space_id: Uuid,
         channel_id: Uuid,
     ) -> Result<Vec<Member>, sqlx::Error> {
-        use std::time::Instant;
-        let time_before_got_cache = Instant::now();
-        let mailbox = crate::events::context::get_cache().mailbox(&space_id).await;
-        if let Ok(cache) = mailbox.try_lock() {
-            if let Some(members_cache) = cache.members.get(&channel_id) {
-                if members_cache.instant > time_before_got_cache {
-                    return Ok(members_cache.map.values().cloned().collect());
-                }
-            }
-        }
         let members =
             sqlx::query_file_as!(Member, "sql/channels/get_member_by_channel.sql", channel_id)
                 .fetch_all(db)
                 .await?;
-        let mut cache = mailbox.lock().await;
-        cache.members.insert(
-            channel_id,
-            crate::events::context::Members {
-                map: members
-                    .iter()
-                    .cloned()
-                    .map(|member| (member.channel.user_id, member))
-                    .collect(),
-                instant: Instant::now(),
-            },
-        );
-        drop(cache);
+        {
+            let map = crate::events::context::store().mailboxes.pin();
+            let mailbox_state = map.get_or_insert_with(space_id, Default::default);
+            mailbox_state.set_members(&members);
+        }
         Ok(members)
     }
 }

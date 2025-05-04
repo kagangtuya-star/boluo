@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-use std::sync::LazyLock;
-
 use chrono::prelude::*;
 use quick_cache::sync::Cache;
 use serde::Serialize;
 use sqlx::{query_file_scalar, query_scalar};
-use ts_rs::TS;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 use uuid::Uuid;
 
 use crate::error::{row_not_found, ModelError};
@@ -19,8 +17,7 @@ async fn invalidate_user_cache(_id: Uuid) {
     // TODO: Cache invalidation for other server instances
 }
 
-#[derive(Debug, Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Clone, sqlx::Type, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
@@ -37,49 +34,6 @@ pub struct User {
     pub avatar_id: Option<Uuid>,
     /// See `Message::color`
     pub default_color: String,
-}
-
-// Expand from `sqlx::Type` to workaround
-// https://github.com/launchbadge/sqlx/issues/1031
-impl<'r> ::sqlx::decode::Decode<'r, ::sqlx::Postgres> for User {
-    fn decode(
-        value: ::sqlx::postgres::PgValueRef<'r>,
-    ) -> ::std::result::Result<
-        Self,
-        ::std::boxed::Box<
-            dyn ::std::error::Error + 'static + ::std::marker::Send + ::std::marker::Sync,
-        >,
-    > {
-        let mut decoder = ::sqlx::postgres::types::PgRecordDecoder::new(value)?;
-        let id = decoder.try_decode::<Uuid>()?;
-        let email = decoder.try_decode::<String>()?;
-        let username = decoder.try_decode::<String>()?;
-        let nickname = decoder.try_decode::<String>()?;
-        let password = decoder.try_decode::<String>()?;
-        let bio = decoder.try_decode::<String>()?;
-        let joined = decoder.try_decode::<DateTime<Utc>>()?;
-        let deactivated = decoder.try_decode::<bool>()?;
-        let avatar_id = decoder.try_decode::<Option<Uuid>>()?;
-        let default_color = decoder.try_decode::<String>()?;
-        ::std::result::Result::Ok(User {
-            id,
-            email,
-            username,
-            nickname,
-            password,
-            bio,
-            joined,
-            deactivated,
-            default_color,
-            avatar_id,
-        })
-    }
-}
-
-impl sqlx::Type<sqlx::Postgres> for User {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        sqlx::postgres::PgTypeInfo::with_name("users")
-    }
 }
 
 impl User {
@@ -224,16 +178,34 @@ impl User {
         Ok(user)
     }
 
-    pub async fn reset_password<'c, T: sqlx::PgExecutor<'c>>(
+    pub async fn get_by_reset_token<'c, T: sqlx::PgExecutor<'c>>(
         db: T,
+        token: Uuid,
+    ) -> Result<User, sqlx::Error> {
+        let user: User = query_file_scalar!("sql/users/get_by_reset_token.sql", token)
+            .fetch_one(db)
+            .await?;
+        USERS_CACHE.insert(user.id, user.clone());
+        Ok(user)
+    }
+
+    pub async fn reset_password(
+        db: &mut sqlx::PgConnection,
         id: Uuid,
+        token: Uuid,
         password: &str,
     ) -> Result<(), ModelError> {
         use crate::validators::PASSWORD;
 
         PASSWORD.run(password)?;
         sqlx::query_file!("sql/users/reset_password.sql", id, password)
-            .execute(db)
+            .execute(&mut *db)
+            .await?;
+        sqlx::query_file!("sql/users/reset_token_use.sql", id, token)
+            .execute(&mut *db)
+            .await?;
+        sqlx::query_file!("sql/users/reset_token_invalidate.sql", id)
+            .execute(&mut *db)
             .await?;
         Ok(())
     }

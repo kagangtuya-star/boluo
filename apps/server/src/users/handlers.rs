@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::sync::LazyLock;
 
 use super::api::{
@@ -12,14 +13,13 @@ use crate::interface::{missing, ok_response, parse_body, parse_query};
 use crate::media::{upload, upload_params};
 use crate::session::{
     add_session_cookie, add_settings_cookie, get_session_from_old_version_cookies,
-    is_authenticate_use_cookie, remove_session, remove_session_cookie, revoke_session,
+    is_authenticate_use_cookie, remove_session_cookie, revoke_session,
 };
 use crate::spaces::Space;
 use crate::users::api::{CheckEmailExists, CheckUsernameExists, EditUser, GetMe, QueryUser};
 use crate::users::models::UserExt;
 use crate::utils::{get_ip, id};
-use crate::{db, mail, redis};
-use deadpool_redis::redis::AsyncCommands;
+use crate::{db, mail};
 use hyper::body::{Body, Incoming};
 use hyper::{Method, Request, Response};
 use quick_cache::sync::Cache;
@@ -132,7 +132,7 @@ pub async fn get_me(req: Request<impl Body>) -> Result<Response<Vec<u8>>, AppErr
                 }
                 Ok(response)
             } else {
-                remove_session(session.id).await?;
+                revoke_session(session.id).await?;
                 log::error!(
                     "[Unexpected] session ({}) is valid and exists, \
                     but the user ({}) to whom the session refers \
@@ -161,9 +161,7 @@ pub async fn login<B: Body>(req: Request<B>) -> Result<Response<Vec<u8>>, AppErr
         .await
         .or_no_permission()?;
     let user_id = user.id;
-    let session = session::start(&user_id)
-        .await
-        .map_err(error_unexpected!())?;
+    let session = session::start(user_id).await.map_err(error_unexpected!())?;
     let token = session::token(&session);
     let token = if form.with_token { Some(token) } else { None };
     let my_spaces = Space::get_by_user(&mut *conn, &user_id).await?;
@@ -187,7 +185,7 @@ pub async fn logout(req: Request<impl Body>) -> Result<Response<Vec<u8>>, AppErr
     use crate::session::authenticate;
 
     if let Ok(session) = authenticate(&req).await {
-        revoke_session(&session.id).await?;
+        revoke_session(session.id).await?;
     }
     let mut response = ok_response(true);
     remove_session_cookie(response.headers_mut());
@@ -301,58 +299,33 @@ pub fn token_key(token: &str) -> Vec<u8> {
     key
 }
 
-pub async fn ip_limit(
-    redis_conn: &mut deadpool_redis::Connection,
-    req: &Request<impl Body>,
-) -> Result<(), AppError> {
-    let ip = get_ip(req).unwrap_or_else(|| {
-        log::warn!("Unable to obtain client IP");
-        log::info!("{:?}", req.headers());
-        "0.0.0.0"
-    });
-    let mut key = b"reset_password_ip:".to_vec();
-    key.extend_from_slice(ip.as_bytes());
-    let counter: i32 = redis_conn.incr(&key, 1).await?;
-    if counter == 1 {
-        redis_conn.expire::<_, ()>(&key, 60 * 2).await?;
-    }
-    if counter > 3 {
-        return Err(AppError::LimitExceeded("IP"));
-    }
-    Ok(())
-}
-
-pub async fn email_limit(
-    redis_conn: &mut deadpool_redis::Connection,
-    email: &str,
-) -> Result<(), AppError> {
-    let email_key = token_key(email);
-    let counter: i32 = redis_conn.incr(&email_key, 1).await?;
-    if counter == 1 {
-        redis_conn.expire::<_, ()>(&email_key, 60 * 2).await?;
-    }
-    if counter > 2 {
-        return Err(AppError::LimitExceeded("email"));
-    }
-    Ok(())
-}
-
 pub async fn reset_password(req: Request<impl Body>) -> Result<(), AppError> {
-    let mut cache = redis::conn().await;
-    ip_limit(&mut cache, &req).await?;
+    use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+    static IP_LIMITER: LazyLock<DefaultKeyedRateLimiter<IpAddr>> = LazyLock::new(|| {
+        RateLimiter::keyed(Quota::per_hour(std::num::NonZeroU32::new(32).unwrap()))
+    });
+    let ip = get_ip(&req)?;
+    IP_LIMITER
+        .check_key(&ip)
+        .map_err(|_| AppError::LimitExceeded("Too many requests, please try again later."))?;
+
     let ResetPassword { email, lang } = parse_body(req).await?;
-    email_limit(&mut cache, &email).await?;
+    let email = email.trim().to_lowercase();
+    crate::validators::EMAIL.run(&email)?;
+
+    static EMAIL_LIMITER: LazyLock<DefaultKeyedRateLimiter<String>> = LazyLock::new(|| {
+        RateLimiter::keyed(Quota::per_hour(std::num::NonZeroU32::new(16).unwrap()))
+    });
+    EMAIL_LIMITER
+        .check_key(&email)
+        .map_err(|_| AppError::LimitExceeded("This email is requested too many times."))?;
 
     let pool = db::get().await;
     User::get_by_email(&pool, &email)
         .await?
         .ok_or(AppError::NotFound("email"))?;
     let token = uuid::Uuid::new_v4().to_string();
-    let key = token_key(&token);
 
-    cache
-        .set_ex::<_, _, ()>(key.as_slice(), email.as_bytes(), 60 * 60)
-        .await?;
     let lang = lang.as_deref().unwrap_or("en");
     match lang {
         "zh" | "zh-CN" | "zh_CN" => {
@@ -406,33 +379,23 @@ pub async fn reset_password(req: Request<impl Body>) -> Result<(), AppError> {
 
 pub async fn reset_password_token_check(req: Request<impl Body>) -> Result<bool, AppError> {
     let ResetPasswordTokenCheck { token } = parse_query(req.uri())?;
-    let email = redis::conn()
-        .await
-        .get::<_, Option<Vec<u8>>>(token_key(&token).as_slice())
-        .await?
-        .map(String::from_utf8);
-    if let Some(Ok(_)) = email {
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    let pool = db::get().await;
+    let mut conn = pool.acquire().await?;
+    let token = token
+        .parse::<Uuid>()
+        .map_err(|_| AppError::BadRequest("Invalid token".to_string()))?;
+    Ok(User::get_by_reset_token(&mut *conn, token).await.is_ok())
 }
 
 pub async fn reset_password_confirm(req: Request<impl Body>) -> Result<(), AppError> {
     let ResetPasswordConfirm { token, password } = parse_body(req).await?;
     let pool = db::get().await;
     let mut conn = pool.acquire().await?;
-    let email = redis::conn()
-        .await
-        .get::<_, Option<Vec<u8>>>(token_key(&token).as_slice())
-        .await?
-        .map(String::from_utf8)
-        .ok_or(AppError::NotFound("token"))?
-        .map_err(|e| AppError::Unexpected(e.into()))?;
-    let user = User::get_by_email(&mut *conn, &email)
-        .await?
-        .ok_or(AppError::NotFound("user"))?;
-    User::reset_password(&mut *conn, user.id, &password).await?;
+    let token = token
+        .parse::<Uuid>()
+        .map_err(|_| AppError::BadRequest("Invalid token".to_string()))?;
+    let user = User::get_by_reset_token(&mut *conn, token).await?;
+    User::reset_password(&mut conn, user.id, token, &password).await?;
     Ok(())
 }
 

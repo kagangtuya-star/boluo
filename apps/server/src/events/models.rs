@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use ts_rs::TS;
 use uuid::Uuid;
 
 pub enum DbEventType {
@@ -23,8 +22,7 @@ pub struct DbEvent {
     pub created: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StatusKind {
     Offline,
@@ -32,19 +30,17 @@ pub enum StatusKind {
     Online,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug, Clone, specta::Type)]
 pub struct UserStatus {
-    #[ts(type = "number")]
     pub timestamp: i64,
     pub kind: StatusKind,
     pub focus: Vec<Uuid>,
 }
 
 pub async fn space_users_status(space_id: Uuid) -> Option<HashMap<Uuid, UserStatus>> {
-    let mailbox = crate::events::context::get_cache()
-        .try_mailbox(&space_id)
-        .await?;
-    let mailbox = mailbox.try_lock().ok()?;
-    Some(mailbox.status.clone())
+    let map = crate::events::context::store().mailboxes.pin();
+    if let Some(status) = map.get(&space_id)?.status.try_lock() {
+        return Some(status.clone());
+    }
+    None
 }

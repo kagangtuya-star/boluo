@@ -1,32 +1,65 @@
 use super::api::Token;
-use super::types::{ConnectionError, EventQuery};
-use super::Event;
+use super::types::{ConnectionError, UpdateQuery};
+use super::Update;
 use crate::csrf::authenticate;
+use crate::db;
 use crate::error::{AppError, Find};
 use crate::events::context::get_mailbox_broadcast_rx;
 use crate::events::models::StatusKind;
 use crate::events::types::ClientEvent;
 use crate::interface::{missing, ok_response, parse_query, Response};
-use crate::redis::make_key;
 use crate::spaces::{Space, SpaceMember};
 use crate::utils::timestamp;
 use crate::websocket::{establish_web_socket, WsError, WsMessage};
-use crate::{db, redis};
-use deadpool_redis::redis::AsyncCommands;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use hyper::body::{Body, Incoming};
 use hyper::upgrade::Upgraded;
 use hyper::Request;
 use hyper_util::rt::TokioIo;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_stream::StreamExt as _;
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 16;
+const TOKEN_VALIDITY: Duration = Duration::from_secs(10);
 type Sender = SplitSink<WebSocketStream<TokioIo<Upgraded>>, tungstenite::Message>;
+
+struct TokenInfo {
+    user_id: Uuid,
+    created_at: Instant,
+}
+
+impl TokenInfo {
+    fn new(user_id: Uuid) -> Self {
+        Self {
+            user_id,
+            created_at: Instant::now(),
+        }
+    }
+    fn user_id(&self) -> Option<Uuid> {
+        if self.created_at.elapsed() < TOKEN_VALIDITY {
+            Some(self.user_id)
+        } else {
+            None
+        }
+    }
+}
+
+static TOKEN_STORE: std::sync::LazyLock<papaya::HashMap<Uuid, TokenInfo>> =
+    std::sync::LazyLock::new(papaya::HashMap::new);
+
+pub async fn token_clean() {
+    tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(5 * 60)))
+        .for_each(|_| async {
+            let mut token_store = TOKEN_STORE.pin();
+            let now = Instant::now();
+            token_store.retain(|_, token| now - token.created_at < TOKEN_VALIDITY);
+        })
+        .await;
+}
 
 async fn check_permissions(
     db: &mut sqlx::PgConnection,
@@ -57,7 +90,7 @@ async fn check_permissions(
 
 // Allow the needless return for keep some visual hints
 #[allow(clippy::needless_return)]
-async fn push_events(mailbox: Uuid, outgoing: &mut Sender, after: Option<i64>, seq: Option<u16>) {
+async fn push_updates(mailbox: Uuid, outgoing: &mut Sender, after: Option<i64>, seq: Option<u16>) {
     use futures::channel::mpsc::channel;
     use tokio::sync::broadcast::error::RecvError;
     use tokio::time::interval;
@@ -80,37 +113,34 @@ async fn push_events(mailbox: Uuid, outgoing: &mut Sender, after: Option<i64>, s
 
     let push = async {
         let mut tx = tx.clone();
-        let mut mailbox_rx = get_mailbox_broadcast_rx(&mailbox).await;
+        let mut mailbox_rx = get_mailbox_broadcast_rx(mailbox);
 
-        let cached_events = Event::get_from_cache(&mailbox, after, seq).await;
-        if !cached_events.is_empty() {
-            use itertools::Itertools;
-            let messages: Vec<Result<String, serde_json::Error>> = cached_events
-                .into_iter()
-                .chunks(CHUNK_SIZE)
-                .into_iter()
-                .map(|events| Event::batch(mailbox, events.collect()))
-                .map(|batch_event| serde_json::to_string(&batch_event))
-                .collect();
-            for message in messages {
-                let Ok(message) = message else {
-                    log::warn!("Failed to serialize batch event to mailbox {}", mailbox);
-                    return;
-                };
-                if let Err(err) = tx.send(WsMessage::Text(message)).await {
-                    log::warn!("Failed to send batch event to mailbox {}: {}", mailbox, err);
-                    return;
-                };
-            }
+        let Some(cached_updates) = Update::get_from_cache(&mailbox, after, seq) else {
+            let error_update = Update::error(
+                mailbox,
+                ConnectionError::Unexpected,
+                "Failed to get cached updates".to_string(),
+            )
+            .encode();
+            tx.send(WsMessage::Text(error_update)).await.ok();
+            return;
+        };
+        for message in cached_updates {
+            if let Err(err) = tx.send(WsMessage::Text(message)).await {
+                log::warn!(
+                    "Failed to send initialize updates to mailbox {}: {}",
+                    mailbox,
+                    err
+                );
+                return;
+            };
         }
-        let initialized = Event::initialized(mailbox);
-        let initialized =
-            serde_json::to_string(&initialized).expect("Failed to serialize initialized event");
+        let initialized = Update::initialized(mailbox).encode();
         tx.send(WsMessage::Text(initialized)).await.ok();
 
         loop {
             let message = match mailbox_rx.recv().await {
-                Ok(event) => WsMessage::Text(event.encoded.clone()),
+                Ok(update) => WsMessage::Text(update.encoded.clone()),
                 Err(RecvError::Lagged(lagged)) => {
                     log::warn!("lagged {lagged} at {mailbox}");
                     continue;
@@ -128,7 +158,11 @@ async fn push_events(mailbox: Uuid, outgoing: &mut Sender, after: Option<i64>, s
     };
 
     let ping = IntervalStream::new(interval(Duration::from_secs(3))).for_each(|_| async {
-        if let Err(err) = tx.clone().send(WsMessage::Text("♥".to_string())).await {
+        if let Err(err) = tx
+            .clone()
+            .send(WsMessage::Text(tungstenite::Utf8Bytes::from_static("♥")))
+            .await
+        {
             log::warn!("{}", err);
         }
     });
@@ -140,8 +174,8 @@ async fn push_events(mailbox: Uuid, outgoing: &mut Sender, after: Option<i64>, s
     }
 }
 
-async fn handle_client_event(mailbox: Uuid, user_id: Option<Uuid>, message: String) {
-    let event: Result<ClientEvent, _> = serde_json::from_str(&message);
+async fn handle_client_event(mailbox: Uuid, user_id: Option<Uuid>, message: &str) {
+    let event: Result<ClientEvent, _> = serde_json::from_str(message);
     if let Err(event) = event {
         log::warn!("Failed to parse event from client: {}", event);
         return;
@@ -154,13 +188,13 @@ async fn handle_client_event(mailbox: Uuid, user_id: Option<Uuid>, message: Stri
                 return;
             };
             if let Err(err) = preview.broadcast(mailbox, user_id).await {
-                log::warn!("Failed to broadcast preview event: {}", err);
+                log::warn!("Failed to broadcast preview update: {}", err);
             };
         }
         ClientEvent::Status { kind, focus } => {
             if let Some(user_id) = user_id {
-                if let Err(err) = Event::status(mailbox, user_id, kind, timestamp(), focus).await {
-                    log::warn!("Failed to broadcast status event: {}", err);
+                if let Err(err) = Update::status(mailbox, user_id, kind, timestamp(), focus).await {
+                    log::warn!("Failed to broadcast status update: {}", err);
                 }
             }
         }
@@ -174,18 +208,17 @@ fn connection_error(
     reason: String,
 ) -> Response {
     let mailbox = mailbox.unwrap_or_default();
-    let event = serde_json::to_string(&Event::error(mailbox, code, reason))
-        .expect("Failed to serialize error event");
+    let error_update = Update::error(mailbox, code, reason).encode();
     establish_web_socket(req, |ws_stream| async move {
         let (mut outgoing, _incoming) = ws_stream.split();
-        outgoing.send(WsMessage::Text(event)).await.ok();
+        outgoing.send(WsMessage::Text(error_update)).await.ok();
     })
 }
 
 async fn connect(req: hyper::Request<Incoming>) -> Response {
     use futures::future;
 
-    let Ok(EventQuery {
+    let Ok(UpdateQuery {
         mailbox,
         token,
         after,
@@ -203,28 +236,11 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
 
     let mut user_id = authenticate(&req).await.map(|session| session.user_id);
     if let (user_id @ Err(_), Some(token)) = (&mut user_id, token) {
-        let mut redis = redis::conn().await;
-        let key = make_key(b"token", &token, b"user_id");
-        let Ok(data) = redis.get::<_, Option<Vec<u8>>>(&key).await else {
-            log::warn!("Failed to get token");
-            return connection_error(
-                req,
-                Some(mailbox),
-                ConnectionError::InvalidToken,
-                "Failed to get token".to_string(),
-            );
-        };
-        if let Some(bytes) = data {
-            let Ok(bytes) = bytes.try_into() else {
-                log::warn!("Invalid token");
-                return connection_error(
-                    req,
-                    Some(mailbox),
-                    ConnectionError::InvalidToken,
-                    "Invalid token".to_string(),
-                );
-            };
-            *user_id = Ok(Uuid::from_bytes(bytes));
+        if let Some(user_id_from_token) = {
+            let token_store = TOKEN_STORE.pin();
+            token_store.get(&token).and_then(TokenInfo::user_id)
+        } {
+            *user_id = Ok(user_id_from_token);
         }
     }
 
@@ -268,8 +284,8 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
     establish_web_socket(req, move |ws_stream| async move {
         let (mut outgoing, incoming) = ws_stream.split();
 
-        let server_push_events = async move {
-            push_events(mailbox, &mut outgoing, after, seq).await;
+        let push_updates_future = async move {
+            push_updates(mailbox, &mut outgoing, after, seq).await;
             outgoing.close().await.ok();
         };
 
@@ -286,17 +302,17 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
                     if message == "♡" {
                         return Ok(());
                     }
-                    handle_client_event(mailbox, user_id, message).await;
+                    handle_client_event(mailbox, user_id, &message).await;
                 }
                 Ok(())
             });
-        futures::pin_mut!(server_push_events);
+        futures::pin_mut!(push_updates_future);
         futures::pin_mut!(receive_client_events);
-        let select_result = future::select(server_push_events, receive_client_events).await;
+        let select_result = future::select(push_updates_future, receive_client_events).await;
         log::debug!("WebSocket connection close");
         match select_result {
             future::Either::Left((_, _)) => {
-                log::debug!("Stop push events");
+                log::debug!("Stop push updates");
             }
             future::Either::Right((Err(e), _)) => {
                 log::warn!("Failed to receive events: {}", e);
@@ -307,7 +323,7 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
         }
         if let (Some(user_id), Some(space)) = (user_id, space) {
             if let Err(e) =
-                Event::status(space.id, user_id, StatusKind::Offline, timestamp(), vec![]).await
+                Update::status(space.id, user_id, StatusKind::Offline, timestamp(), vec![]).await
             {
                 log::warn!("Failed to broadcast offline status: {}", e);
             }
@@ -317,12 +333,11 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
 
 pub async fn token(req: Request<impl Body>) -> Result<Token, AppError> {
     if let Ok(session) = authenticate(&req).await {
-        let mut redis = redis::conn().await;
         let token = Uuid::new_v4();
-        let key = make_key(b"token", &token, b"user_id");
-        redis
-            .set_ex::<_, _, ()>(&key, session.user_id.as_bytes(), 10)
-            .await?;
+        {
+            let token_store = TOKEN_STORE.pin();
+            token_store.insert(token, TokenInfo::new(session.user_id));
+        }
         Ok(Token {
             token: Some(token.to_string()),
         })

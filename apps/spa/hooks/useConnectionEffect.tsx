@@ -1,5 +1,5 @@
-import { type ChannelMembers, type EventId, type ServerEvent, type UserStatus } from '@boluo/api';
-import { isServerEvent } from '@boluo/api/events';
+import { type ChannelMembers, type EventId, type Update, type UserStatus } from '@boluo/api';
+import { isServerUpdate } from '@boluo/api/events';
 import { webSocketUrlAtom } from '@boluo/common';
 import { useAtomValue, useSetAtom, useStore } from 'jotai';
 import { useCallback, useEffect } from 'react';
@@ -35,7 +35,7 @@ const connect = (
   mailboxId: string,
   connectionState: ConnectionState,
   after: EventId,
-  onEvent: (event: ServerEvent) => void,
+  onUpdateReceived: (update: Update) => void,
   dispatch: ChatDispatch,
   token: string | undefined | null,
 ): WebSocket | null => {
@@ -70,30 +70,17 @@ const connect = (
     }
     if (!raw || typeof raw !== 'string' || raw === PONG) return;
 
-    let event: unknown = null;
+    let update: unknown = null;
     try {
-      event = JSON.parse(raw);
+      update = JSON.parse(raw);
     } catch {
       return;
     }
-    if (!isServerEvent(event)) return;
-    let eventList: ServerEvent[];
-    if (event.body.type === 'BATCH') {
-      eventList = event.body.encodedEvents.flatMap((encodedEvent) => {
-        try {
-          return [JSON.parse(encodedEvent) as ServerEvent];
-        } catch {
-          recordError('Failed to parse event', { event: encodedEvent });
-          return [];
-        }
-      });
-    } else {
-      eventList = [event];
-    }
-    for (const event of eventList) {
-      dispatch({ type: 'eventFromServer', payload: event });
-      onEvent(event);
-    }
+    if (!isServerUpdate(update)) return;
+    let updates: Update[];
+
+    dispatch({ type: 'update', payload: update });
+    onUpdateReceived(update);
   };
   return newConnection;
 };
@@ -108,27 +95,27 @@ export const useConnectionEffect = (
   const store = useStore();
   const dispatch = useSetAtom(chatAtom);
 
-  const onEvent = useCallback(
-    (event: ServerEvent) => {
-      switch (event.body.type) {
+  const onUpdateReceived = useCallback(
+    (update: Update) => {
+      switch (update.body.type) {
         case 'CHANNEL_DELETED':
-          void mutate(['/channels/by_space', event.mailbox]);
-          void mutate(['/channels/query', event.body.channelId]);
+          void mutate(['/channels/by_space', update.mailbox]);
+          void mutate(['/channels/query', update.body.channelId]);
           return;
         case 'CHANNEL_EDITED':
-          void mutate(['/channels/by_space', event.mailbox]);
-          void mutate(['/channels/query', event.body.channelId], event.body.channel);
+          void mutate(['/channels/by_space', update.mailbox]);
+          void mutate(['/channels/query', update.body.channelId], update.body.channel);
           return;
         case 'SPACE_UPDATED': {
-          const { space } = event.body.spaceWithRelated;
+          const { space } = update.body.spaceWithRelated;
           void mutate(['/spaces/query', space.id], space);
           void mutate(['/channels/by_space', space.id]);
           return;
         }
         case 'MEMBERS': {
-          const members = event.body.members;
+          const members = update.body.members;
           void mutate<ChannelMembers>(
-            ['/channels/members', event.body.channelId],
+            ['/channels/members', update.body.channelId],
             (channelMembers) => {
               if (channelMembers != null) {
                 return { ...channelMembers, members };
@@ -139,17 +126,16 @@ export const useConnectionEffect = (
         }
         case 'STATUS_MAP':
           void mutate<Record<string, UserStatus | undefined>>(
-            ['/spaces/users_status', event.body.spaceId],
-            event.body.statusMap,
+            ['/spaces/users_status', update.body.spaceId],
+            update.body.statusMap,
           );
           return;
         case 'ERROR':
           dispatch({
             type: 'connectionError',
-            payload: { mailboxId, code: event.body.code ?? 'UNEXPECTED' },
+            payload: { mailboxId, code: update.body.code ?? 'UNEXPECTED' },
           });
           return;
-        case 'BATCH':
         case 'NEW_MESSAGE':
         case 'MESSAGE_DELETED':
         case 'MESSAGE_EDITED':
@@ -174,7 +160,7 @@ export const useConnectionEffect = (
         mailboxId,
         chatState.connection,
         chatState.lastEventId,
-        onEvent,
+        onUpdateReceived,
         dispatch,
         token,
       );
@@ -186,7 +172,7 @@ export const useConnectionEffect = (
           mailboxId,
           chatState.connection,
           chatState.lastEventId,
-          onEvent,
+          onUpdateReceived,
           dispatch,
           token,
         );
@@ -197,5 +183,5 @@ export const useConnectionEffect = (
       unsub();
       if (ws) ws.close();
     };
-  }, [onEvent, mailboxId, store, webSocketEndpoint, dispatch, token, isTokenLoading]);
+  }, [onUpdateReceived, mailboxId, store, webSocketEndpoint, dispatch, token, isTokenLoading]);
 };
