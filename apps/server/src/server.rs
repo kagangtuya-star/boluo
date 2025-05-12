@@ -34,10 +34,13 @@ mod mail;
 mod media;
 mod messages;
 mod pos;
+mod pubsub;
+mod redis;
 mod s3;
 mod session;
 mod spaces;
 mod ts;
+mod ttl;
 mod users;
 mod validators;
 mod websocket;
@@ -51,6 +54,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError> {
     let path = req.uri().path().to_string();
+
+    if !path.starts_with("/api/") {
+        let target = "https://old.boluo.chat".to_string() + &path;
+        return Ok(hyper::Response::builder()
+            .status(302)
+            .header("Location", target)
+            .body(Vec::new())
+            .map_err(|err| AppError::Unexpected(err.into()))?);
+    }
+
     macro_rules! table {
         ($prefix: expr, $handler: expr) => {
             let prefix = $prefix;
@@ -171,6 +184,8 @@ async fn main() {
         .expect("Failed to bind address");
     db::check().await;
     log::info!("Database is ready");
+    redis::check().await;
+    log::info!("Redis is ready");
 
     if args.check {
         return;

@@ -17,18 +17,20 @@
     "APP_URL",
     "SITE_URL",
     "SENTRY_TUNNEL",
-    "SENTRY_PROJECT"
+    "SENTRY_PROJECT",
+    "FLY_BACKEND_APP_NAME"
   ],
   "tasks": {
     "generate": { "dependsOn": ["^generate"], "inputs": ["$TURBO_DEFAULT$", ".env*"] },
     "build": {
       "dependsOn": ["^generate", "generate", "^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "storybook-static/**", "!.next/cache/**"]
     },
     "lint": { "dependsOn": ["^lint"] },
     "test": { "dependsOn": ["^build"] },
     "check-types": { "dependsOn": ["^check-types"] },
+    "storybook": { "dependsOn": ["^build"], "cache": false, "persistent": true },
     "dev": { "dependsOn": ["^generate", "generate", "^build"], "cache": false, "persistent": true },
     "@boluo/icons#generate": { "dependsOn": [], "inputs": ["icons/**"], "outputs": ["src/**"] },
     "@boluo/icons#build": {

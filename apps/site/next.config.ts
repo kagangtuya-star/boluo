@@ -3,7 +3,6 @@ import path from 'path';
 import withBundleAnalyzer from '@next/bundle-analyzer';
 import { withSentryConfig } from '@sentry/nextjs';
 import { NextConfig } from 'next';
-const STANDALONE = process.env.STANDALONE === 'true';
 
 const config: NextConfig = {
   reactStrictMode: true,
@@ -11,13 +10,13 @@ const config: NextConfig = {
   eslint: {
     dirs: ['src', 'tests'],
   },
-  output: STANDALONE ? 'standalone' : undefined,
-  experimental: {
-    turbo: {
-      resolveAlias: {
-        '@formatjs/icu-messageformat-parser': '@formatjs/icu-messageformat-parser/no-parser',
-      },
+  output: 'standalone',
+  turbopack: {
+    resolveAlias: {
+      '@formatjs/icu-messageformat-parser': '@formatjs/icu-messageformat-parser/no-parser',
     },
+  },
+  experimental: {
     swcPlugins: [
       [
         '@swc/plugin-formatjs',
@@ -35,7 +34,7 @@ const config: NextConfig = {
     DOMAIN: process.env.DOMAIN,
     SENTRY_DSN: process.env.SENTRY_DSN,
   },
-  outputFileTracingRoot: STANDALONE ? path.join(__dirname, '../../') : undefined,
+  outputFileTracingRoot: path.join(__dirname, '../../'),
   webpack: (config) => {
     // `react-intl` without parser
     // https://formatjs.io/docs/guides/advanced-usage#react-intl-without-parser-40-smaller

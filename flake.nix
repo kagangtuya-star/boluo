@@ -1,9 +1,16 @@
 {
   description = "A chat tool made for play RPG";
-
+  nixConfig = {
+    extra-substituters = [
+      "https://boluo.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "boluo.cachix.org-1:03yc2Do5i+RFofJNpy7GPOCvYv4wHKEnnQTgFvP6o2Q="
+    ];
+  };
   inputs = {
     nixpkgs = {
-      url = "github:mythal/nixpkgs/production";
+      url = "github:NixOS/nixpkgs/nixos-unstable";
     };
     flake-parts.url = "github:hercules-ci/flake-parts";
     crane = {
@@ -17,6 +24,7 @@
 
   outputs =
     inputs@{
+      self,
       flake-parts,
       crane,
       ...
@@ -48,6 +56,7 @@
             "spa"
             "site"
           ];
+          rev = if (self ? rev) then self.rev else lib.warn "Dirty workspace" "unknown";
           pruneSource =
             name:
             pkgs.stdenvNoCC.mkDerivation {
@@ -99,10 +108,19 @@
             fakeNss
           ];
 
-          certEnv = [
+          commonEnv = [
             "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            "APP_VERSION=${rev}"
           ];
+
+          imageLabel = {
+            "org.opencontainers.image.url" = "https://github.com/mythal/boluo";
+            "org.opencontainers.image.version" = version;
+            "org.opencontainers.image.revision" = rev;
+            "org.opencontainers.image.vendor" = "Mythal";
+            "org.opencontainers.image.licenses" = "AGPL-3.0";
+          };
 
           cargo-source =
             let
@@ -161,15 +179,16 @@
               tag = "latest";
               contents = commonImageContents;
               config = {
-                env = certEnv;
+                env = commonEnv;
                 Cmd = [ "${self'.packages.server}/bin/server" ];
+                Labels = imageLabel;
               };
             };
 
             legacy = import ./support/legacy.nix common;
 
             legacy-image = import ./support/legacy-image.nix {
-              inherit pkgs;
+              inherit pkgs imageLabel;
               legacy = self'.packages.legacy;
             };
 
@@ -177,15 +196,48 @@
 
             site-image = import ./support/site-image.nix {
               boluo-site = self'.packages.site;
-              inherit pkgs certEnv commonImageContents;
+              inherit
+                pkgs
+                commonEnv
+                commonImageContents
+                imageLabel
+                ;
             };
 
             spa = import ./support/spa.nix common;
 
             spa-image = import ./support/spa-image.nix {
-              inherit pkgs;
+              inherit pkgs imageLabel;
               boluo-spa = self'.packages.spa;
             };
+
+            push-images = pkgs.writeShellScriptBin "push-images" ''
+              set -e
+              skopeo login ghcr.io -u $GITHUB_ACTOR -p $GITHUB_TOKEN
+              IMAGE_TAG="$(${pkgs.python3}/bin/python3 ${./support/image-tag.py})"
+              echo "Pushing images with tag: $IMAGE_TAG"
+              BASE="docker://ghcr.io/mythal/boluo"
+              ${pkgs.skopeo}/bin/skopeo copy docker-archive:"${self'.packages.server-image}" $BASE/server:$IMAGE_TAG
+              ${pkgs.skopeo}/bin/skopeo copy docker-archive:"${self'.packages.legacy-image}" $BASE/legacy:$IMAGE_TAG
+              ${pkgs.skopeo}/bin/skopeo copy docker-archive:"${self'.packages.site-image}" $BASE/site:$IMAGE_TAG
+              ${pkgs.skopeo}/bin/skopeo copy docker-archive:"${self'.packages.spa-image}" $BASE/spa:$IMAGE_TAG
+            '';
+
+            deploy-server-staging = pkgs.writeShellScriptBin "deploy-server-staging" ''
+              ${pkgs.flyctl}/bin/flyctl deploy --config ${apps/server/fly.staging.toml} --remote-only
+            '';
+
+            deploy-server-production = pkgs.writeShellScriptBin "deploy-server-production" ''
+              ${pkgs.flyctl}/bin/flyctl deploy --config ${apps/server/fly.toml} --remote-only
+            '';
+
+            deploy-site-staging = pkgs.writeShellScriptBin "deploy-site-staging" ''
+              ${pkgs.flyctl}/bin/flyctl deploy --config ${apps/site/fly.staging.toml} --remote-only
+            '';
+
+            deploy-site-production = pkgs.writeShellScriptBin "deploy-site-production" ''
+              ${pkgs.flyctl}/bin/flyctl deploy --config ${apps/site/fly.toml} --remote-only
+            '';
           };
 
           checks = {
@@ -204,7 +256,9 @@
               gnumake
               nixfmt-rfc-style
               sqlx-cli
-              prefetch-npm-deps
+              flyctl
+              nix-fast-build
+              nix-output-monitor
             ];
             shellHook = ''
               export PATH="node_modules/.bin:$PATH"

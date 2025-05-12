@@ -40,6 +40,20 @@ export function middleware(request: NextRequest): NextResponse | void {
     // eslint-disable-next-line no-restricted-globals
     const hostname = process.env.BACKEND_URL || 'https://boluo-net.kagangtuya.top';
     const url = new URL(hostname + pathname + request.nextUrl.search, request.url);
+
+    // eslint-disable-next-line no-restricted-globals
+    const backEndApp = process.env.FLY_BACKEND_APP_NAME;
+    const hostInHeader = request.headers.get('host');
+    if (backEndApp && hostInHeader) {
+      // fly-replay
+      // https://fly.io/docs/networking/dynamic-request-routing/
+      // https://community.fly.io/t/cacheable-fly-replay-and-better-subdomain-routing/24665
+      const response = NextResponse.redirect(url);
+      response.headers.set('fly-replay', `app=${backEndApp}`);
+      response.headers.set('fly-replay-cache', `${hostInHeader}/api/*`);
+      response.headers.set('fly-replay-cache-ttl-secs', '60');
+      return response;
+    }
     return NextResponse.rewrite(url);
   }
   if (IS_STATIC_FILES.test(pathname) || pathname.startsWith('/api')) {
