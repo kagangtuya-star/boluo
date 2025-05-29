@@ -11,6 +11,7 @@ export interface NoPermissionError {
 export interface NotJsonError {
   code: 'NOT_JSON';
   cause: unknown;
+  body?: string;
 }
 
 export interface NotFoundError {
@@ -26,6 +27,7 @@ export interface FetchFailError {
 export interface UnexpectedError {
   code: 'UNEXPECTED';
   message: string;
+  context: unknown;
 }
 
 export interface BadRequestError {
