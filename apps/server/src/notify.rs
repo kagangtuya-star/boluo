@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
 use chrono::{DateTime, Utc};
+use tracing::Instrument as _;
 use uuid::Uuid;
 
 use crate::db;
@@ -8,7 +9,7 @@ use crate::db;
 static NOTIFY_SPACE_ACTIVITY: LazyLock<tokio::sync::mpsc::Sender<(Uuid, DateTime<Utc>)>> =
     LazyLock::new(|| {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(Uuid, DateTime<Utc>)>(64);
-
+        let span = tracing::info_span!("space_activity");
         tokio::spawn(async move {
             let mut map: HashMap<Uuid, DateTime<Utc>, _> =
                 HashMap::with_hasher(ahash::RandomState::new());
@@ -28,7 +29,7 @@ static NOTIFY_SPACE_ACTIVITY: LazyLock<tokio::sync::mpsc::Sender<(Uuid, DateTime
                             // Update the database with the latest activity
 
                             let Ok(mut conn) = pool.acquire().await else {
-                                log::warn!("Failed to acquire connection from pool, skipping.");
+                                tracing::warn!("Failed to acquire connection from pool, skipping.");
                                 continue;
                             };
                             for (channel_id, update_time) in taken_map.into_iter() {
@@ -40,26 +41,26 @@ static NOTIFY_SPACE_ACTIVITY: LazyLock<tokio::sync::mpsc::Sender<(Uuid, DateTime
                                 .execute(&mut *conn)
                                 .await
                                 {
-                                    log::error!("Failed to update activity for channel {}: {}", channel_id, err);
+                                    tracing::error!("Failed to update activity for channel {}: {}", channel_id, err);
                                 };
                             }
                         }
                     }
 
                     else => {
-                        log::warn!("Channel closed, exiting space activity task");
+                        tracing::warn!("Channel closed, exiting space activity task");
                         break;
                     }
                 }
             }
-        });
+        }.instrument(span));
         tx
     });
 
 pub fn space_activity(channel_id: Uuid, update_time: Option<DateTime<Utc>>) {
     let tx = NOTIFY_SPACE_ACTIVITY.clone();
     if let Err(_err) = tx.try_send((channel_id, update_time.unwrap_or_else(Utc::now))) {
-        log::info!(
+        tracing::info!(
             "Failed to send space activity notification: {}, tokio channel is full",
             channel_id
         );

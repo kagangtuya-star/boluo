@@ -1,10 +1,13 @@
 #![allow(dead_code)]
-#![allow(clippy::too_many_arguments, clippy::needless_return)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_return,
+    clippy::collapsible_if
+)]
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use crate::context::debug;
 use clap::Parser;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -13,8 +16,8 @@ use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use hyper::service::service_fn;
 use hyper::Request;
+use hyper::service::service_fn;
 
 #[macro_use]
 mod utils;
@@ -29,7 +32,6 @@ mod db;
 mod events;
 mod info;
 mod interface;
-mod logger;
 mod mail;
 mod media;
 mod messages;
@@ -90,49 +92,87 @@ async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError>
 async fn handler(
     req: Request<Incoming>,
 ) -> Result<hyper::Response<Full<hyper::body::Bytes>>, hyper::Error> {
-    use std::time::Instant;
-    let start = Instant::now();
+    use tracing::Instrument as _;
+
     let method = req.method().clone();
-    let method = method.as_str();
+    let uri = req.uri().clone();
+    let path = uri.path();
+    let query = uri.query().unwrap_or("");
+
+    // Create a span for this HTTP request with structured fields
+    let span = tracing::info_span!(
+        "http_request",
+        method = %method,
+        path = %path,
+        query = %query,
+        status_code = tracing::field::Empty,
+        duration_ms = tracing::field::Empty,
+        user_id = tracing::field::Empty,
+        error = tracing::field::Empty,
+    );
+
+    let start = std::time::Instant::now();
+
+    // Extract origin for CORS
     let origin = req
         .headers()
         .get(ORIGIN)
         .and_then(|x| x.to_str().ok())
         .map(|x| x.to_owned());
-    let uri = req.uri().clone();
-    if req.method() == hyper::Method::OPTIONS {
-        return Ok(cors::preflight_requests(req));
-    }
-    let response = router(req).await;
-    let mut has_error = false;
-    let response = allow_origin(
-        origin.as_deref(),
-        match response {
-            Ok(response) => response.map(|bytes| Full::new(bytes.into())),
-            Err(e) => {
-                if let AppError::NotFound(_) = e {
-                    // Do not log 404
-                } else {
-                    has_error = true;
-                }
-                error::log_error(&e, &uri);
-                err_response(e).map(|bytes| Full::new(bytes.into()))
-            }
-        },
-    );
 
-    if has_error {
-        log::warn!("{} {} {:?}", method, &uri, start.elapsed());
-    } else if uri.path().starts_with("/api/info") {
-        // do nothing
-    } else if uri.path().starts_with("/api/users/get_me") {
-        log::debug!("{} {} {:?}", method, &uri, start.elapsed());
-    } else {
-        log::info!("{} {} {:?}", method, &uri, start.elapsed());
+    // Handle preflight requests quickly
+    if req.method() == hyper::Method::OPTIONS {
+        let response = cors::preflight_requests(req);
+        span.record("status_code", 200);
+        span.record("duration_ms", start.elapsed().as_millis() as u64);
+        return Ok(response);
     }
-    Ok(response)
+
+    // Route the request
+    async {
+        let response = router(req).await;
+        let duration = start.elapsed();
+        let span = tracing::Span::current();
+
+        let response = allow_origin(
+            origin.as_deref(),
+            match response {
+                Ok(response) => {
+                    span.record("status_code", response.status().as_u16());
+                    span.record("duration_ms", duration.as_millis() as u64);
+
+                    if duration.as_millis() > 500 {
+                        tracing::warn!("Slow request: {}ms", duration.as_millis());
+                    } else if path.starts_with("/api/info")
+                        || path.starts_with("/api/users/get_me")
+                        || path.starts_with("/api/events/connect")
+                    {
+                        tracing::debug!("Request Finished");
+                    } else {
+                        tracing::info!("Request Finished");
+                    }
+                    response.map(|bytes| Full::new(bytes.into()))
+                }
+                Err(e) => {
+                    let status_code = e.status_code().as_u16();
+                    span.record("status_code", status_code);
+                    span.record("duration_ms", duration.as_millis() as u64);
+                    span.record("error", format!("{e}").as_str());
+
+                    error::log_error(&e, &uri);
+
+                    err_response(e).map(|bytes| Full::new(bytes.into()))
+                }
+            },
+        );
+
+        Ok(response)
+    }
+    .instrument(span)
+    .await
 }
 
+#[tracing::instrument]
 async fn storage_check() {
     // Skip in CI
     if context::ci() {
@@ -147,7 +187,7 @@ async fn storage_check() {
         .send()
         .await
         .expect("Cannot connect to bucket");
-    log::info!("Object Storage is ready");
+    tracing::info!("Object Storage is ready");
 }
 #[derive(Parser)]
 struct Args {
@@ -159,9 +199,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+
     dotenv::from_filename(".env.local").ok();
     dotenv::dotenv().ok();
-    logger::setup_logger(debug()).unwrap();
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args = Args::parse();
     if args.types {
@@ -194,12 +239,12 @@ async fn main() {
         .await
         .expect("Failed to bind address");
 
-    log::info!("Server listening on: {}", socket);
+    tracing::info!("Server listening on: {}", socket);
 
     db::check().await;
-    log::info!("Database is ready");
+    tracing::info!("Database is ready");
     redis::check().await;
-    log::info!("Redis is ready");
+    tracing::info!("Redis is ready");
 
     if args.check {
         return;
@@ -211,21 +256,21 @@ async fn main() {
             .expect("Failed to create signal stream");
     let http = http1::Builder::new();
 
-    log::info!("Startup ID: {}", events::startup_id());
+    tracing::info!("Startup ID: {}", events::startup_id());
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
                 handle_connection(accept_result, &http).await;
             },
             _ = terminate_stream.recv() => {
-                log::info!("Graceful shutdown signal received");
+                tracing::info!("Graceful shutdown signal received");
                 break;
             },
         }
     }
     shutdown::SHUTDOWN.notify_waiters();
     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-    log::info!("Shutting down");
+    tracing::info!("Shutting down");
 }
 
 async fn handle_connection(
@@ -234,19 +279,20 @@ async fn handle_connection(
 ) {
     match accept_result {
         Ok((stream, addr)) => {
-            log::debug!("Accepted connection from: {}", addr);
+            tracing::Span::current().record("addr", tracing::field::display(addr));
+            tracing::debug!("Accepted connection from: {}", addr);
             let io = TokioIo::new(stream);
             let conn = http
                 .serve_connection(io, service_fn(handler))
                 .with_upgrades();
             tokio::task::spawn(async move {
                 if let Err(err) = conn.await {
-                    log::error!("server error: {}", err);
+                    tracing::error!("server error: {}", err);
                 }
             });
         }
         Err(err) => {
-            log::debug!("Failed to accept: {}", err);
+            tracing::debug!("Failed to accept: {}", err);
         }
     }
 }

@@ -9,13 +9,13 @@ use crate::db;
 use crate::error::{AppError, Find};
 use crate::events::models::space_users_status;
 use crate::events::{StatusMap, Update};
-use crate::interface::{self, missing, ok_response, parse_query, IdQuery, Response};
+use crate::interface::{self, IdQuery, Response, missing, ok_response, parse_query};
 use crate::spaces::api::{JoinSpace, KickFromSpace, SearchParams, SpaceWithMember};
 use crate::spaces::models::SpaceMemberWithUser;
 use crate::users::User;
 use arc_swap::ArcSwap;
-use hyper::body::Body;
 use hyper::Request;
+use hyper::body::Body;
 use uuid::Uuid;
 
 async fn list(_req: Request<impl Body>) -> Result<Vec<Space>, AppError> {
@@ -191,7 +191,7 @@ async fn create(req: Request<impl Body>) -> Result<SpaceWithMember, AppError> {
     assert_eq!(channel.r#type, _type);
     ChannelMember::add_user(&mut *trans, user.id, channel.id, channel.space_id, "", true).await?;
     trans.commit().await?;
-    log::info!("a space ({}) was just created", space.id);
+    tracing::info!("a space ({}) was just created", space.id);
     Ok(SpaceWithMember {
         space,
         member,
@@ -361,10 +361,10 @@ async fn delete(req: Request<impl Body>) -> Result<Space, AppError> {
     let space = Space::get_by_id(&mut *conn, &id).await.or_not_found()?;
     if space.owner_id == session.user_id {
         Space::delete(&mut *conn, id).await?;
-        log::info!("A space ({}) was deleted", space.id);
+        tracing::info!("A space ({}) was deleted", space.id);
         return Ok(space);
     }
-    log::warn!(
+    tracing::warn!(
         "The user {} failed to try delete a space {}",
         session.user_id,
         space.id

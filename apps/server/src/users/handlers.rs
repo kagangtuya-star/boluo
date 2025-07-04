@@ -16,7 +16,7 @@ use crate::session::{
     revoke_session,
 };
 use crate::spaces::Space;
-use crate::ttl::{minute, Lifespan, Mortal};
+use crate::ttl::{Lifespan, Mortal, minute};
 use crate::users::api::{CheckEmailExists, CheckUsernameExists, EditUser, GetMe, QueryUser};
 use crate::users::models::UserExt;
 use crate::utils::{get_ip, id};
@@ -34,7 +34,7 @@ async fn register(req: Request<impl Body>) -> Result<User, AppError> {
     }: Register = interface::parse_body(req).await?;
     let pool = db::get().await;
     let user = User::register(&pool, &email, &username, &nickname, &password).await?;
-    log::info!("{} ({}) was registered.", user.username, user.email);
+    tracing::info!("{} ({}) was registered.", user.username, user.email);
     Ok(user)
 }
 
@@ -126,7 +126,7 @@ pub async fn get_me(req: Request<impl Body>) -> Result<Response<Vec<u8>>, AppErr
                 Ok(response)
             } else {
                 revoke_session(session.id).await?;
-                log::error!(
+                tracing::error!(
                     "[Unexpected] session ({}) is valid and exists, \
                     but the user ({}) to whom the session refers \
                     cannot be found in the database.",

@@ -1,6 +1,7 @@
 use std::{sync::OnceLock, time::Duration};
 
 use tokio_tungstenite::tungstenite::Utf8Bytes;
+use tracing::Instrument as _;
 use uuid::Uuid;
 
 pub type EventSender = tokio::sync::broadcast::Sender<Utf8Bytes>;
@@ -20,19 +21,23 @@ pub fn get_broadcast_table() -> &'static BroadcastTable {
             .build()
     });
     CLEANUP.call_once(|| {
-        tokio::spawn(async {
-            let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
-            loop {
-                tokio::select! {
-                    _ = crate::shutdown::SHUTDOWN.notified() => {
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        broadcast_clean().await;
+        let span = tracing::info_span!("broadcast_clean");
+        tokio::spawn(
+            async {
+                let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+                loop {
+                    tokio::select! {
+                        _ = crate::shutdown::SHUTDOWN.notified() => {
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            broadcast_clean().await;
+                        }
                     }
                 }
             }
-        });
+            .instrument(span),
+        );
     });
     table
 }
@@ -41,7 +46,7 @@ async fn broadcast_clean() {
     let mut broadcast_table = BROADCAST_TABLE.wait().pin();
     let before_count = broadcast_table.len();
     broadcast_table.retain(|_, v| v.receiver_count() != 0);
-    log::info!(
+    tracing::info!(
         "Finish broadcast clean, {} -> {}",
         before_count,
         broadcast_table.len()

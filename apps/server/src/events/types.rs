@@ -1,5 +1,5 @@
-use crate::channels::api::MemberWithUser;
 use crate::channels::Channel;
+use crate::channels::api::MemberWithUser;
 
 use crate::error::AppError;
 use crate::events::context::EncodedUpdate;
@@ -10,10 +10,11 @@ use crate::messages::Message;
 use crate::spaces::api::SpaceWithRelated;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::AtomicU32;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicU32;
 use tokio::spawn;
 use tokio_tungstenite::tungstenite::{self, Utf8Bytes};
+use tracing::Instrument as _;
 use uuid::Uuid;
 
 use super::context::MailBoxState;
@@ -279,11 +280,16 @@ impl Update {
     }
 
     pub fn push_members(space_id: Uuid, channel_id: Uuid, members: Vec<MemberWithUser>) {
-        spawn(async move {
-            if let Err(e) = Update::fire_members(space_id, channel_id, members).await {
-                log::warn!("Failed to fetch member list: {}", e);
+        let span =
+            tracing::info_span!("push_members", space_id = %space_id, channel_id = %channel_id);
+        spawn(
+            async move {
+                if let Err(e) = Update::fire_members(space_id, channel_id, members).await {
+                    tracing::warn!("Failed to fetch member list: {}", e);
+                }
             }
-        });
+            .instrument(span),
+        );
     }
 
     pub fn channel_edited(channel: Channel) {
@@ -313,7 +319,7 @@ impl Update {
             mailbox_state.query().ok()?
         };
         let Ok(updates) = updates_receiver.await else {
-            log::error!("Failed to receive updates for mailbox {}", mailbox_id);
+            tracing::error!("Failed to receive updates for mailbox {}", mailbox_id);
             return Some(vec![]);
         };
         if updates.is_empty() {
@@ -342,20 +348,24 @@ impl Update {
     }
 
     pub fn space_updated(space_id: Uuid) {
-        tokio::spawn(async move {
-            match crate::spaces::handlers::space_related(&space_id).await {
-                Ok(space_with_related) => {
-                    let body = UpdateBody::SpaceUpdated {
-                        space_with_related: Box::new(space_with_related),
-                    };
-                    Update::transient(space_id, body);
+        let span = tracing::info_span!("space_updated", space_id = %space_id);
+        spawn(
+            async move {
+                match crate::spaces::handlers::space_related(&space_id).await {
+                    Ok(space_with_related) => {
+                        let body = UpdateBody::SpaceUpdated {
+                            space_with_related: Box::new(space_with_related),
+                        };
+                        Update::transient(space_id, body);
+                    }
+                    Err(e) => tracing::error!(
+                        "There an error occurred while preparing the `space_updated` update: {}",
+                        e
+                    ),
                 }
-                Err(e) => log::error!(
-                    "There an error occurred while preparing the `space_updated` update: {}",
-                    e
-                ),
             }
-        });
+            .instrument(span),
+        );
     }
 
     pub fn app_info() -> Update {
@@ -415,21 +425,29 @@ impl Update {
             .await
             .is_err()
         {
-            log::error!("Failed to send update to mailbox {}", mailbox_id);
+            tracing::error!("Failed to send update to mailbox {}", mailbox_id);
             return;
         }
         Update::send(mailbox_id, encoded_update.encoded.clone()).await;
     }
 
+    /// Directly send the update to the mailbox.
+    ///
+    /// This is used for transient updates that are not required to be persisted.
     pub fn transient(mailbox: Uuid, body: UpdateBody) {
-        spawn(async move {
-            let update = Update::build(body, mailbox);
-            Update::send(mailbox, update.encoded.clone()).await;
-        });
+        let span = tracing::info_span!("transient", mailbox = %mailbox);
+        spawn(
+            async move {
+                let update = Update::build(body, mailbox);
+                Update::send(mailbox, update.encoded.clone()).await;
+            }
+            .instrument(span),
+        );
     }
 
     pub fn fire(body: UpdateBody, mailbox: Uuid) {
-        spawn(Update::async_fire(body, mailbox));
+        let span = tracing::info_span!("fire", mailbox = %mailbox);
+        spawn(Update::async_fire(body, mailbox).instrument(span));
     }
 }
 
@@ -448,7 +466,7 @@ pub async fn initialize_startup_id() -> u16 {
     use redis::AsyncCommands;
 
     let Some(mut redis) = crate::redis::conn().await else {
-        log::info!("Redis is not available, assuming single node environment");
+        tracing::info!("Redis is not available, assuming single node environment");
         return 0;
     };
     const NODE_ID_KEY: &str = "node:startup";
@@ -461,9 +479,9 @@ pub async fn initialize_startup_id() -> u16 {
         if startup_id > 0 {
             return startup_id;
         }
-        log::warn!("Startup id is 0");
+        tracing::warn!("Startup id is 0");
     } else {
-        log::warn!(
+        tracing::warn!(
             "Failed to parse startup id from redis, reset to 0. Redis value: {}",
             node_id_string
         );
@@ -490,7 +508,7 @@ pub async fn initialize_startup_id() -> u16 {
     };
     let _: () = redis
         .set(
-            format!("startup:{}:info", startup_id),
+            format!("startup:{startup_id}:info"),
             serde_json::to_string(&node_info).expect("Failed to serialize startup info"),
         )
         .await

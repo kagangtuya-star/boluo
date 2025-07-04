@@ -1,8 +1,8 @@
+use super::Channel;
 use super::api::{
     ChannelMembers, ChannelWithMaybeMember, CreateChannel, EditChannel, GrantOrRemoveChannelMaster,
 };
-use super::models::{members_attach_user, ChannelMember};
-use super::Channel;
+use super::models::{ChannelMember, members_attach_user};
 use crate::channels::api::{
     AddChannelMember, ChannelMemberWithUser, ChannelWithMember, ChannelWithRelated,
     CheckChannelName, EditChannelMember, Export, GrantOrRevoke, JoinChannel, KickFromChannel,
@@ -12,12 +12,12 @@ use crate::csrf::authenticate;
 use crate::db;
 use crate::error::{AppError, Find};
 use crate::events::Update;
-use crate::interface::{self, missing, ok_response, parse_body, parse_query, IdQuery};
+use crate::interface::{self, IdQuery, missing, ok_response, parse_body, parse_query};
 use crate::messages::Message;
 use crate::session::Session;
 use crate::spaces::{Space, SpaceMember};
-use hyper::body::Body;
 use hyper::Request;
+use hyper::body::Body;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -436,7 +436,7 @@ async fn delete(req: Request<impl Body>) -> Result<bool, AppError> {
     admin_only(&mut *conn, &session.user_id, &channel.space_id).await?;
 
     Channel::delete(&mut *conn, &id).await?;
-    log::info!("channel {} was deleted.", &id);
+    tracing::info!("channel {} was deleted.", &id);
     Update::channel_deleted(channel.space_id, id);
     Update::space_updated(channel.space_id);
     Ok(true)

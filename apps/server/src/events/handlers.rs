@@ -1,27 +1,27 @@
+use super::Update;
 use super::api::Token;
 use super::types::{Seq, UpdateQuery};
-use super::Update;
 use crate::csrf::authenticate_optional;
 use crate::db;
 use crate::error::{AppError, Find};
 use crate::events::get_mailbox_broadcast_rx;
 use crate::events::models::StatusKind;
 use crate::events::types::ClientEvent;
-use crate::interface::{missing, ok_response, parse_query, Response};
+use crate::interface::{Response, missing, ok_response, parse_query};
 use crate::session::{AuthenticateFail, Session};
 use crate::spaces::{Space, SpaceMember};
 use crate::utils::timestamp;
-use crate::websocket::{establish_web_socket, WsError, WsMessage};
+use crate::websocket::{WsError, WsMessage, establish_web_socket};
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt, TryStreamExt};
+use hyper::Request;
 use hyper::body::{Body, Incoming};
 use hyper::upgrade::Upgraded;
-use hyper::Request;
 use hyper_util::rt::TokioIo;
 use std::time::Duration;
 use tokio_stream::StreamExt as _;
-use tokio_tungstenite::tungstenite::{self, Utf8Bytes};
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::{self, Utf8Bytes};
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 16;
@@ -42,7 +42,7 @@ async fn check_permissions(
                 .or_no_permission()?;
         }
         None => {
-            log::warn!("A user tried to access private space but did not pass authentication");
+            tracing::warn!("A user tried to access private space but did not pass authentication");
             return Err(AppError::NoPermission(
                 "This space does not allow non-members to view it.".to_string(),
             ));
@@ -72,7 +72,7 @@ async fn push_updates(
                 Ok(_) => (),
                 Err(ConnectionClosed) | Err(AlreadyClosed) => break,
                 Err(e) => {
-                    log::error!("Error on sending WebSocket message: {}", e);
+                    tracing::error!("Error on sending WebSocket message: {}", e);
                     return;
                 }
             }
@@ -95,7 +95,7 @@ async fn push_updates(
         };
         for message in cached_updates {
             if let Err(err) = tx.send(WsMessage::Text(message)).await {
-                log::warn!(
+                tracing::warn!(
                     "Failed to send initialize updates to mailbox {}: {}",
                     mailbox,
                     err
@@ -110,16 +110,16 @@ async fn push_updates(
             let message = match mailbox_rx.recv().await {
                 Ok(update) => WsMessage::Text(update),
                 Err(RecvError::Lagged(lagged)) => {
-                    log::warn!("lagged {lagged} at {mailbox}");
+                    tracing::warn!("lagged {lagged} at {mailbox}");
                     continue;
                 }
                 Err(RecvError::Closed) => {
-                    log::error!("mailbox {mailbox} closed");
+                    tracing::error!("mailbox {mailbox} closed");
                     return;
                 }
             };
             if let Err(e) = tx.send(message).await {
-                log::error!("Failed to send broadcast message to {mailbox}: {e}");
+                tracing::error!("Failed to send broadcast message to {mailbox}: {e}");
                 break;
             }
         }
@@ -131,7 +131,7 @@ async fn push_updates(
             .send(WsMessage::Text(tungstenite::Utf8Bytes::from_static("♥")))
             .await
         {
-            log::debug!("{}", err);
+            tracing::debug!("{}", err);
         }
     });
 
@@ -145,18 +145,18 @@ async fn push_updates(
 async fn handle_client_event(mailbox: Uuid, session: Option<Session>, message: &str) {
     let event: Result<ClientEvent, _> = serde_json::from_str(message);
     if let Err(event) = event {
-        log::warn!("Failed to parse event from client: {}", event);
+        tracing::warn!("Failed to parse event from client: {}", event);
         return;
     }
     let event = event.unwrap();
     match event {
         ClientEvent::Preview { preview } => {
             let Some(session) = session else {
-                log::warn!("An user tried to preview without authentication");
+                tracing::warn!("An user tried to preview without authentication");
                 return;
             };
             if let Err(err) = preview.broadcast(mailbox, session.user_id).await {
-                log::warn!("Failed to broadcast preview update: {}", err);
+                tracing::warn!("Failed to broadcast preview update: {}", err);
             };
         }
         ClientEvent::Status { kind, focus } => {
@@ -164,7 +164,7 @@ async fn handle_client_event(mailbox: Uuid, session: Option<Session>, message: &
                 if let Err(err) =
                     Update::status(mailbox, session.user_id, kind, timestamp(), focus).await
                 {
-                    log::warn!("Failed to broadcast status update: {}", err);
+                    tracing::warn!("Failed to broadcast status update: {}", err);
                 }
             }
         }
@@ -173,6 +173,7 @@ async fn handle_client_event(mailbox: Uuid, session: Option<Session>, message: &
 
 fn connection_error(req: Request<Incoming>, mailbox: Option<Uuid>, error: AppError) -> Response {
     let mailbox = mailbox.unwrap_or_default();
+    tracing::error!(error = %error, "WebSocket connection error");
     let error_update = Update::error(mailbox, error).encode();
     establish_web_socket(req, |ws_stream| async move {
         let (mut outgoing, _incoming) = ws_stream.split();
@@ -182,7 +183,7 @@ fn connection_error(req: Request<Incoming>, mailbox: Option<Uuid>, error: AppErr
 
 async fn connect(req: hyper::Request<Incoming>) -> Response {
     let Ok(query) = parse_query::<UpdateQuery>(req.uri()) else {
-        log::warn!("Failed to parse query {:?}", req.uri());
+        tracing::warn!("Failed to parse query {:?}", req.uri());
         return connection_error(
             req,
             None,
@@ -229,10 +230,9 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
 
         static BASIC_INFO: std::sync::LazyLock<Utf8Bytes> =
             std::sync::LazyLock::new(|| serde_json::to_string(&Update::app_info()).unwrap().into());
-        outgoing
-            .send(WsMessage::Text(BASIC_INFO.clone()))
-            .await
-            .ok();
+        if let Err(e) = outgoing.send(WsMessage::Text(BASIC_INFO.clone())).await {
+            tracing::warn!(error = %e, "Failed to send basic info");
+        }
         let push_updates_future = async move {
             push_updates(mailbox, &mut outgoing, after, seq, node).await;
             outgoing.close().await.ok();
@@ -241,7 +241,7 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
         let receive_client_events = incoming
             .timeout(Duration::from_secs(40))
             .map_err(|_| {
-                log::warn!("Incoming WebSocket connection already closed");
+                tracing::debug!("Incoming WebSocket connection already closed");
                 WsError::AlreadyClosed
             })
             .and_then(future::ready)
@@ -257,23 +257,22 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
         futures::pin_mut!(push_updates_future);
         futures::pin_mut!(receive_client_events);
         let select_result = future::select(push_updates_future, receive_client_events).await;
-        log::debug!("WebSocket connection close");
         match select_result {
             future::Either::Left((_, _)) => {
-                log::debug!("Stop push updates");
+                tracing::debug!("Stop push updates");
             }
             future::Either::Right((Err(e), _)) => {
                 if let tungstenite::Error::Protocol(
                     tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
                 ) = e
                 {
-                    log::debug!("Reset without closing handshake");
+                    tracing::debug!("Reset without closing handshake");
                 } else {
-                    log::warn!("Failed to receive events: {}", e);
+                    tracing::warn!(error = %e, "Failed to receive events");
                 }
             }
             future::Either::Right((Ok(_), _)) => {
-                log::debug!("Stop receiving events");
+                tracing::debug!("Stop receiving events");
             }
         }
         if let Some(session) = session {
@@ -287,7 +286,7 @@ async fn connect(req: hyper::Request<Incoming>) -> Response {
                 )
                 .await
                 {
-                    log::warn!("Failed to broadcast offline status: {}", e);
+                    tracing::warn!("Failed to broadcast offline status: {}", e);
                 }
             }
         }
