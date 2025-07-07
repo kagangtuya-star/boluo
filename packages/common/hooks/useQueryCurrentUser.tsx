@@ -1,7 +1,7 @@
 import type { ApiError, User } from '@boluo/api';
 import { get } from '@boluo/api-browser';
 import useSWR, { type SWRConfiguration, type SWRResponse } from 'swr';
-import { type Result } from '@boluo/utils';
+import { sleep, type Result } from '@boluo/utils';
 
 export const useQueryCurrentUser = (
   config?: SWRConfiguration<User | null, ApiError>,
@@ -9,8 +9,12 @@ export const useQueryCurrentUser = (
   return useSWR(
     ['/users/query' as const, null],
     async ([path]): Promise<User | null> => {
-      const result: Result<User | null, ApiError> = await get(path, { id: null });
-      return result.unwrapOr(null);
+      let result: Result<User | null, ApiError> = await get(path, { id: null });
+      if (result.isErr && result.err.code === 'FETCH_FAIL') {
+        await sleep(10);
+        result = await get(path, { id: null });
+      }
+      return result.unwrap();
     },
     config,
   );

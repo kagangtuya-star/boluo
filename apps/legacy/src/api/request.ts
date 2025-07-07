@@ -2,11 +2,11 @@ import { isCrossOrigin } from '../settings';
 import store from '../store';
 import { Id } from '../utils/id';
 import { Err, Ok, Result } from '../utils/result';
+import type { MakeToken } from '@boluo/api/bindings';
 import {
   AddMember,
   Channel,
   ChannelMember,
-  ChannelMembers,
   ChannelMemberWithUser,
   ChannelWithMember,
   ChannelWithRelated,
@@ -17,7 +17,7 @@ import {
   Export,
   JoinChannel,
 } from './channels';
-import { AppError, notJson, UNAUTHENTICATED } from './error';
+import { AppError, FETCH_FAIL, notJson, UNAUTHENTICATED } from './error';
 import { Media } from './media';
 import { ByChannel, EditMessage, Message, MoveBetween, MoveTo, NewMessage } from './messages';
 import {
@@ -80,25 +80,33 @@ export const request = async <T>(
   if (isCrossOrigin) {
     headers.append('X-Debug', '1');
   }
-
-  const result = await fetch(path, {
-    method,
-    headers,
-    body,
-    credentials: 'include',
-    mode: 'cors', // 明确指定cors模式
-    cache: 'no-cache', // 防止缓存问题
-  });
+  let result: Response;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const appResult = toResult<T, AppError>(await result.json());
-    if (appResult.isErr && appResult.value.code === UNAUTHENTICATED) {
-      location.replace('/login');
-    }
-    return appResult;
+    result = await fetch(path, {
+      method,
+      headers,
+      body,
+      credentials: 'include',
+    });
+  } catch (e) {
+    return new Err({
+      code: FETCH_FAIL,
+      message: e instanceof Error ? e.message : 'Unknown error',
+      context: null,
+    });
+  }
+  let resultJson: unknown = null;
+  try {
+    resultJson = await result.json();
   } catch (e) {
     return new Err(notJson);
   }
+  const appResult = toResult<T, AppError>(resultJson as ApiOk<T> | ApiErr<AppError>);
+  if (appResult.isErr && appResult.value.code === UNAUTHENTICATED) {
+    await get('/users/logout');
+    location.replace('/login');
+  }
+  return appResult;
 };
 
 export const makeUri = (path: string, query?: object, addBaseUrl = true): string => {
@@ -280,10 +288,7 @@ export function get(
 export function get(path: '/channels/export', query: Export): Promise<AppResult<Message[]>>;
 export function get(path: '/messages/query', query: IdQuery): Promise<AppResult<Message | null>>;
 export function get(path: '/messages/by_channel', query: ByChannel): Promise<AppResult<Message[]>>;
-export function get(
-  path: '/events/token',
-  query: IdQuery,
-): Promise<AppResult<{ token: string | null }>>;
+export function get(path: '/events/token', query: MakeToken): Promise<AppResult<{ token: string }>>;
 
 export function get<Q extends object, T>(path: string, query?: Q): Promise<AppResult<T>> {
   return request(makeUri(path, query), 'GET', null);

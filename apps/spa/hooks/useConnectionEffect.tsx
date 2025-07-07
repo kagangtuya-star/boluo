@@ -1,25 +1,57 @@
-import { type ChannelMembers, type EventId, type Update, type UserStatus } from '@boluo/api';
+import {
+  MakeToken,
+  type ChannelMembers,
+  type EventId,
+  type Update,
+  type UserStatus,
+} from '@boluo/api';
 import { isServerUpdate } from '@boluo/api/events';
-import { webSocketUrlAtom } from '@boluo/common';
+import { useQueryCurrentUser, webSocketUrlAtom } from '@boluo/common';
 import { useAtomValue, useSetAtom, useStore } from 'jotai';
 import { useCallback, useEffect } from 'react';
 import { useSWRConfig } from 'swr';
-import { isUuid } from '@boluo/utils';
+import { isUuid, sleep } from '@boluo/utils';
 import { PING, PONG } from '../const';
 import { chatAtom, type ChatDispatch, connectionStateAtom } from '../state/chat.atoms';
 import { type ConnectionState } from '../state/connection.reducer';
-import { recordError } from '../error';
+import { get } from '@boluo/api-browser';
 
 let lastPongTime = Date.now();
 const RELOAD_TIMEOUT = 1000 * 60 * 30;
 
-const createMailboxConnection = (
+const UNAUTHENTICATED = 'UNAUTHENTICATED';
+const NETWORK_ERROR = 'NETWORK_ERROR';
+type ConnectionError = 'UNAUTHENTICATED' | 'NETWORK_ERROR';
+
+const SLEEP_MS = [0, 7, 17, 37];
+
+const getToken = async (
+  makeToken: MakeToken,
+  retryCount: number = 0,
+): Promise<string | ConnectionError> => {
+  const token = await get('/events/token', makeToken);
+  if (token.isOk) return token.some.token;
+  const err = token.err;
+  if (err.code === 'UNAUTHENTICATED') {
+    return 'UNAUTHENTICATED';
+  } else if (err.code === 'FETCH_FAIL') {
+    if (retryCount >= SLEEP_MS.length) return NETWORK_ERROR;
+    await new Promise((resolve) => setTimeout(resolve, SLEEP_MS[retryCount]));
+    return await getToken(makeToken, retryCount + 1);
+  } else {
+    throw new Error('Failed to get connection token', { cause: err });
+  }
+};
+
+const createMailboxConnection = async (
   baseUrl: string,
   id: string,
-  token?: string | null,
+  userId: string | null,
   after?: EventId,
-): WebSocket => {
+): Promise<WebSocket | ConnectionError> => {
   const paramsObject: Record<string, string> = { mailbox: id };
+  const token = await getToken({ spaceId: id, userId });
+  if (token === 'UNAUTHENTICATED' || token === 'NETWORK_ERROR') return token;
   if (token) paramsObject.token = token;
   if (after) {
     paramsObject.after = after.timestamp.toString();
@@ -31,15 +63,15 @@ const createMailboxConnection = (
   return new WebSocket(url);
 };
 
-const connect = (
+const connect = async (
   webSocketEndpoint: string,
   mailboxId: string,
+  userId: string | null,
   connectionState: ConnectionState,
   after: EventId,
   onUpdateReceived: (update: Update) => void,
   dispatch: ChatDispatch,
-  token: string | undefined | null,
-): WebSocket | null => {
+): Promise<WebSocket | ConnectionError | null> => {
   if (!isUuid(mailboxId)) return null;
   if (connectionState.type !== 'CLOSED') return null;
   if (connectionState.countdown > 0) {
@@ -53,7 +85,8 @@ const connect = (
   }
   dispatch({ type: 'connecting', payload: { mailboxId } });
 
-  const newConnection = createMailboxConnection(webSocketEndpoint, mailboxId, token, after);
+  const newConnection = await createMailboxConnection(webSocketEndpoint, mailboxId, userId, after);
+  if (newConnection === UNAUTHENTICATED || newConnection === NETWORK_ERROR) return newConnection;
   newConnection.onopen = (_) => {
     console.info(`connection established for ${mailboxId}`);
     dispatch({ type: 'connected', payload: { connection: newConnection, mailboxId } });
@@ -86,13 +119,11 @@ const connect = (
   return newConnection;
 };
 
-export const useConnectionEffect = (
-  mailboxId: string,
-  isTokenLoading: boolean,
-  token: string | undefined | null,
-) => {
+export const useConnectionEffect = (mailboxId: string) => {
   const { mutate } = useSWRConfig();
+  const { data: user, isLoading: isQueryingUser } = useQueryCurrentUser();
   const webSocketEndpoint = useAtomValue(webSocketUrlAtom);
+  const userId = user?.id ?? null;
   const store = useStore();
   const dispatch = useSetAtom(chatAtom);
 
@@ -151,38 +182,44 @@ export const useConnectionEffect = (
 
   useEffect(() => {
     if (mailboxId === '') return;
-    if (isTokenLoading) return;
-    const chatState = store.get(chatAtom);
-    let ws: WebSocket | null = null;
-    const unsub = store.sub(connectionStateAtom, () => {
+    if (isQueryingUser) return;
+    let currentConnection: WebSocket | null = null;
+    const performConnect = () => {
       const chatState = store.get(chatAtom);
-      ws = connect(
+      connect(
         webSocketEndpoint,
         mailboxId,
+        userId,
         chatState.connection,
         chatState.lastEventId,
         onUpdateReceived,
         dispatch,
-        token,
-      );
+      ).then((connectionResult) => {
+        if (connectionResult == null) return;
+        if (connectionResult === NETWORK_ERROR) {
+          alert('Failed to establish connection due to network error, please try again later');
+          return;
+        } else if (connectionResult === UNAUTHENTICATED) {
+          alert('The session is invalid, please login again');
+          return;
+        }
+        currentConnection = connectionResult;
+      });
+    };
+    const unsub = store.sub(connectionStateAtom, () => {
+      performConnect();
     });
+    // The `store.sub` only triggers when the state changes,
+    // so we need to call `performConnect` immediately.
     const handle = window.setTimeout(() => {
-      if (ws == null) {
-        ws = connect(
-          webSocketEndpoint,
-          mailboxId,
-          chatState.connection,
-          chatState.lastEventId,
-          onUpdateReceived,
-          dispatch,
-          token,
-        );
+      if (currentConnection == null) {
+        performConnect();
       }
     });
     return () => {
       window.clearTimeout(handle);
       unsub();
-      if (ws) ws.close();
+      if (currentConnection) currentConnection.close();
     };
-  }, [onUpdateReceived, mailboxId, store, webSocketEndpoint, dispatch, token, isTokenLoading]);
+  }, [onUpdateReceived, userId, mailboxId, store, webSocketEndpoint, dispatch, isQueryingUser]);
 };
