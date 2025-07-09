@@ -1,12 +1,16 @@
 use crate::channels::ChannelMember;
 use crate::channels::models::Member;
-use crate::events::Update;
+use crate::events::models::UserStatus;
+use crate::events::status::StatusAction;
 use crate::events::types::ChannelUserId;
+use crate::events::{StatusMap, Update};
 use crate::spaces::SpaceMember;
 use crate::utils::timestamp;
 use std::collections::BTreeMap;
 use std::sync::OnceLock as OnceCell;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use super::types::EventId;
@@ -33,9 +37,10 @@ impl EncodedUpdate {
 }
 
 pub enum Action {
-    Query(tokio::sync::oneshot::Sender<BTreeMap<EventId, Utf8Bytes>>),
+    Query(tokio::sync::oneshot::Sender<CachedUpdates>),
     Update(Box<EncodedUpdate>),
     Members(MembersAction),
+    Status(super::status::StatusAction),
 }
 
 const MAILBOX_STATE_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(16);
@@ -160,8 +165,7 @@ impl MailboxManager {
 
     pub async fn query_encoded_updates(
         &self,
-    ) -> Result<tokio::sync::oneshot::Receiver<BTreeMap<EventId, Utf8Bytes>>, MailboxManageError>
-    {
+    ) -> Result<tokio::sync::oneshot::Receiver<CachedUpdates>, MailboxManageError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let action = Action::Query(tx);
         self.send_read_action(action).await?;
@@ -172,6 +176,30 @@ impl MailboxManager {
         let action = Action::Update(update);
         self.send_write_action(action).await
     }
+
+    pub async fn query_status(&self) -> Result<StatusMap, MailboxManageError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let action = Action::Status(StatusAction::Query(tx));
+        self.send_read_action(action).await?;
+        rx.await.map_err(|_| MailboxManageError::Closed)
+    }
+
+    pub fn update_status(
+        &self,
+        user_id: Uuid,
+        status: UserStatus,
+    ) -> Result<(), MailboxManageError> {
+        let action = Action::Status(StatusAction::Update(user_id, status));
+        if let Err(TrySendError::Closed(_)) = self.sender.try_send(action) {
+            return Err(MailboxManageError::Closed);
+        }
+        Ok(())
+    }
+}
+
+pub struct CachedUpdates {
+    pub updates: BTreeMap<EventId, Utf8Bytes>,
+    pub start_at: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -191,7 +219,6 @@ impl From<tokio::sync::mpsc::error::SendError<Action>> for MailboxManageError {
 pub struct MailBoxState {
     pub id: Uuid,
     manager: MailboxManager,
-    pub status: super::status::StatusActor,
 }
 
 type PreviewMap = std::collections::HashMap<ChannelUserId, EncodedUpdate, ahash::RandomState>;
@@ -324,56 +351,89 @@ fn cleanup(updates: &mut BTreeMap<EventId, EncodedUpdate>, preview_map: &mut Pre
         }
         _ => false,
     });
+    if preview_map.capacity() > 64 {
+        preview_map.shrink_to_fit();
+    }
 }
 
 impl MailBoxState {
     pub fn new(id: Uuid) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Action>(32);
         let manager = MailboxManager::new(id, tx);
+        let span = tracing::info_span!("MailboxState", mailbox_id = %id);
         tokio::spawn(async move {
             let mut updates: BTreeMap<EventId, EncodedUpdate> = BTreeMap::new();
             let mut preview_map = PreviewMap::with_hasher(ahash::RandomState::new());
             let mut last_activity_at = std::time::Instant::now();
             let mut members_state = members::MembersCache::new();
+            let mut status_state = super::status::StatusState::new(id);
+            let mut broadcast_status_interval = tokio::time::interval(std::time::Duration::from_secs(12));
+            let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(120));
+            let mut start_at = timestamp();
             loop {
                 tokio::select! {
                     Some(action) = rx.recv() => {
-                        last_activity_at = std::time::Instant::now();
                         match action {
                             Action::Query(sender) => {
+                                last_activity_at = std::time::Instant::now();
                                 let mut updates = updates.iter().map(|(event_id, value)| (*event_id, value.encoded.clone())).collect::<BTreeMap<EventId, Utf8Bytes>>();
                                 for preview in preview_map.values() {
                                     updates.insert(preview.update.id, preview.encoded.clone());
                                 }
-                                sender.send(updates).ok();
+                                sender.send(CachedUpdates {
+                                    updates,
+                                    start_at,
+                                }).ok();
                             }
                             Action::Update(encoded_update) => {
+                                last_activity_at = std::time::Instant::now();
                                 on_update(&mut updates, &mut preview_map, *encoded_update);
                             }
                             Action::Members(action) => {
                                 members_state.update(action);
+                            },
+                            Action::Status(action) => {
+                                status_state.update(action);
                             }
                         }
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                    _ = broadcast_status_interval.tick() => {
+                        status_state.update(StatusAction::Broadcast);
+                    }
+                    _ = cleanup_interval.tick() => {
+                        if !rx.is_empty() {
+                            continue;
+                        }
                         if last_activity_at.elapsed() > std::time::Duration::from_secs(60 * 60 * 2) {
                             store().remove(id);
+                            tracing::info!(mailbox_id = %id, "Mailbox state is idle, shutting down");
+                            break;
                         } else {
+                            let before_size = updates.len();
                             cleanup(&mut updates, &mut preview_map);
+                            let after_size = updates.len();
+                            if after_size != before_size {
+                                tracing::info!(mailbox_id = %id, "Cleaned up {} updates", before_size - after_size);
+                            }
+                            match updates.first_key_value() {
+                                Some((event_id, _)) => {
+                                    start_at = event_id.timestamp;
+                                }
+                                None => {
+                                    start_at = timestamp();
+                                }
+                            }
                         }
                     }
                     else => {
+                        tracing::info!(mailbox_id = %id, "The channel is closed, shutting down");
                         break;
                     }
                 }
             }
-        });
+        }.instrument(span));
 
-        MailBoxState {
-            id,
-            manager,
-            status: super::status::StatusActor::new(id),
-        }
+        MailBoxState { id, manager }
     }
 }
 
@@ -382,10 +442,10 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new() -> Store {
+    fn new() -> Store {
         Store {
             mailboxes: papaya::HashMap::builder()
-                .capacity(4096)
+                .capacity(256)
                 .hasher(ahash::RandomState::new())
                 .resize_mode(papaya::ResizeMode::Blocking)
                 .build(),

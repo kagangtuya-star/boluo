@@ -99,6 +99,12 @@ async fn handler(
     let path = uri.path();
     let query = uri.query().unwrap_or("");
 
+    let client_version = req
+        .headers()
+        .get(hyper::header::HeaderName::from_static("x-client-version"))
+        .and_then(|x| x.to_str().ok())
+        .unwrap_or("");
+
     // Create a span for this HTTP request with structured fields
     let span = tracing::info_span!(
         "http_request",
@@ -109,6 +115,8 @@ async fn handler(
         duration_ms = tracing::field::Empty,
         user_id = tracing::field::Empty,
         error = tracing::field::Empty,
+        auth_method = tracing::field::Empty,
+        client = %client_version,
     );
 
     let start = std::time::Instant::now();
@@ -201,8 +209,8 @@ struct Args {
 async fn main() {
     use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
-    dotenv::from_filename(".env.local").ok();
-    dotenv::dotenv().ok();
+    dotenvy::from_filename(".env.local").ok();
+    dotenvy::dotenv().ok();
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
         .from_env_lossy();
@@ -279,20 +287,18 @@ async fn handle_connection(
 ) {
     match accept_result {
         Ok((stream, addr)) => {
-            tracing::Span::current().record("addr", tracing::field::display(addr));
-            tracing::debug!("Accepted connection from: {}", addr);
             let io = TokioIo::new(stream);
             let conn = http
                 .serve_connection(io, service_fn(handler))
                 .with_upgrades();
             tokio::task::spawn(async move {
                 if let Err(err) = conn.await {
-                    tracing::error!("server error: {}", err);
+                    tracing::warn!(error = %err, addr = %addr, "HTTP connection error");
                 }
             });
         }
         Err(err) => {
-            tracing::debug!("Failed to accept: {}", err);
+            tracing::warn!(error = %err, "Failed to accept connection");
         }
     }
 }

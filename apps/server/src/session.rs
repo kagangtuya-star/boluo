@@ -35,7 +35,7 @@ pub enum AuthenticateFail {
     MalformedToken,
     #[error("Failed to verify the session")]
     CheckSignFail,
-    #[error("Credentials are expired")]
+    #[error("Can not find the session")]
     NoSessionFound,
 }
 
@@ -126,7 +126,7 @@ pub fn add_session_cookie(
         .max_age(Duration::days(30));
 
     let session_cookie_domain = domain();
-    if !is_debug {
+    if !is_debug && !session_cookie_domain.is_empty() {
         builder = builder.domain(session_cookie_domain);
     }
     let session_cookie = builder.build().to_string();
@@ -248,50 +248,21 @@ fn parse_cookie(value: &hyper::header::HeaderValue) -> Option<&str> {
 
 #[tracing::instrument]
 async fn get_session_from_db(session_id: Uuid) -> Result<Session, AppError> {
-    use redis::AsyncCommands;
-
-    {
-        let mut conn = crate::db::get().await.acquire().await?;
-        let session = sqlx::query_file_as!(Session, "sql/users/session_fetch.sql", session_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|err| {
-                tracing::warn!("Database error while fetching session: {}", err);
-                AppError::Unexpected(err.into())
-            })?;
-        if let Some(session) = session {
-            return Ok(session);
-        };
-    }
-    let Some(mut redis) = crate::redis::conn().await else {
-        return Err(AppError::NotFound("session"));
-    };
-    let user_id: Uuid = redis
-        .get::<_, Vec<u8>>(crate::redis::make_key(b"sessions", &session_id, b"user_id"))
+    let mut conn = crate::db::get().await.acquire().await?;
+    let session = sqlx::query_file_as!(Session, "sql/users/session_fetch.sql", session_id)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(|err| {
-            tracing::warn!("Redis error while fetching session: {}", err);
-            AppError::NotFound("session")
-        })
-        .and_then(|user_id| {
-            if user_id.is_empty() {
-                return Err(AppError::NotFound("session"));
-            }
-            Uuid::from_slice(&user_id).map_err(|err| {
-                tracing::warn!("Failed to convert user_id bytes to UUID: {}", err);
-                AppError::NotFound("session")
-            })
+            tracing::warn!(error = %err, "Database error while fetching session");
+            AppError::Db { source: err }
         })?;
-
-    start_with_session_id(user_id, session_id)
-        .await
-        .map_err(|_err: sqlx::Error| AppError::NotFound("session"))
+    session.ok_or(AuthenticateFail::NoSessionFound.into())
 }
 
 async fn get_session_from_token(token: &str) -> Result<Session, AppError> {
     let session_id = match token_verify(token) {
         Err(err) => {
-            tracing::warn!("Failed to verify the token: {} error: {}", token, err);
+            tracing::warn!(error = %err, "Failed to verify the token: {}", token);
             return Err(AuthenticateFail::CheckSignFail.into());
         }
         Ok(id) => id,
@@ -306,39 +277,51 @@ async fn get_session_from_token(token: &str) -> Result<Session, AppError> {
 pub async fn authenticate_with_cookie(
     headers: &HeaderMap<HeaderValue>,
 ) -> Result<Session, AppError> {
-    tracing::Span::current().record("auth_method", "cookie");
     let cookie = headers.get(COOKIE).ok_or(AuthenticateFail::Guest)?;
     let token = parse_cookie(cookie).ok_or(AuthenticateFail::Guest)?;
-    get_session_from_token(token).await
+    let session = get_session_from_token(token).await?;
+    Ok(session)
 }
 
-#[tracing::instrument(skip(req), fields(auth_method = tracing::field::Empty, user_id = tracing::field::Empty))]
 pub async fn authenticate(
     req: &hyper::Request<impl hyper::body::Body>,
 ) -> Result<Session, AppError> {
     let headers = req.headers();
+    let span = tracing::Span::current();
 
     let session = if let Some(header_value) = headers.get(AUTHORIZATION) {
         if let Ok(authorization) = header_value.to_str() {
-            let span = tracing::Span::current();
             let token = authorization.trim_start_matches("Bearer ").trim();
             let session = get_session_from_token(token).await;
-            if let Ok(session) = session {
-                span.record("auth_method", "bearer_token");
-                Ok(session)
-            } else {
-                tracing::warn!("Failed to authenticate with bearer token, fallback to cookie");
-                authenticate_with_cookie(headers).await
+            match session {
+                Ok(session) => {
+                    span.record("auth_method", "bearer_token");
+                    Ok(session)
+                }
+                Err(e) => {
+                    // TODO: check if this fallback is needed
+                    authenticate_with_cookie(headers).await.inspect(|session| {
+                        span.record("auth_method", "cookie");
+                        tracing::warn!(
+                            user_id = %session.user_id,
+                            token = %token,
+                            token_error = %e,
+                            "Failed to authenticate with bearer token, fallback to cookie"
+                        );
+                    })
+                }
             }
         } else {
             tracing::warn!("Failed to convert header value to string, fallback to cookie");
-            authenticate_with_cookie(headers).await
+            authenticate_with_cookie(headers).await.inspect(|_| {
+                span.record("auth_method", "cookie");
+            })
         }
     } else {
         authenticate_with_cookie(headers).await
     };
     let session = session?;
-    tracing::Span::current().record("user_id", tracing::field::display(session.user_id));
+    span.record("user_id", tracing::field::display(session.user_id));
     tracing::debug!(
         user_id = %session.user_id,
         session_id = %session.id,

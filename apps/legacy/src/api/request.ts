@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-empty-object-type */
 import { isCrossOrigin } from '../settings';
 import store from '../store';
 import { Id } from '../utils/id';
@@ -129,7 +130,6 @@ export const makeUri = (path: string, query?: object, addBaseUrl = true): string
   }
   const searchParams = new URLSearchParams();
   for (const entry of entities) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const [key, value] = entry;
     if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
       searchParams.set(key, String(value));
@@ -244,7 +244,7 @@ export function patch<T, U extends object = object, Q extends object = {}>(
   return request(makeUri(path, query), 'PATCH', JSON.stringify(payload));
 }
 
-export function get(path: '/users/query', query: { id?: Id }): Promise<AppResult<User>>;
+export function get(path: '/users/query', query: { id?: Id }): Promise<AppResult<User | null>>;
 export function get(path: '/users/get_me'): Promise<AppResult<GetMe | null>>;
 export function get(path: '/users/logout'): Promise<AppResult<true>>;
 export function get(

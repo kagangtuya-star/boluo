@@ -3,9 +3,9 @@ import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 import { LoggedIn } from '../../actions';
 import { AppError, NO_PERMISSION } from '../../api/error';
-import { post } from '../../api/request';
+import { get, post } from '../../api/request';
 import { LoginData } from '../../api/users';
-import loginIcon from '../../assets/icons/sign-in.svg';
+import SignIn from '../../assets/icons/sign-in.svg';
 import Icon from '../../components/atoms/Icon';
 import { useTitle } from '../../hooks/useTitle';
 import { useDispatch } from '../../store';
@@ -51,6 +51,15 @@ function Login() {
     const result = await post('/users/login', data);
     setLoggingIn(false);
     if (result.isOk) {
+      // Double check if the login is successful
+      const querySelf = await get('/users/query', {});
+      if (querySelf.isErr) {
+        setLoginError(querySelf.value);
+        return;
+      } else if (querySelf.value == null) {
+        alert('登录失败，请清理缓存或者更换浏览器重试');
+        return;
+      }
       dispatch<LoggedIn>({ type: 'LOGGED_IN', ...result.value.me });
       const next = popNext() || '/';
       navigate(next, { replace: true });
@@ -93,7 +102,7 @@ function Login() {
             忘记密码？
           </Link>
           <Button css={[mT(4), textLg]} data-variant="primary" type="submit" disabled={loggingIn}>
-            <Icon sprite={loginIcon} loading={loggingIn} />
+            <Icon icon={SignIn} loading={loggingIn} />
             登录
           </Button>
         </div>
