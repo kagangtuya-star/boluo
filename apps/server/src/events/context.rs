@@ -2,7 +2,7 @@ use crate::channels::ChannelMember;
 use crate::channels::models::Member;
 use crate::events::models::UserStatus;
 use crate::events::status::StatusAction;
-use crate::events::types::ChannelUserId;
+use crate::events::types::{ChannelUserId, UpdateBody};
 use crate::events::{StatusMap, Update};
 use crate::spaces::SpaceMember;
 use crate::utils::timestamp;
@@ -58,6 +58,14 @@ impl MailboxManager {
     }
 
     async fn send_read_action(&self, action: Action) -> Result<(), MailboxManageError> {
+        let action = match self.sender.try_send(action) {
+            Ok(_) => return Ok(()),
+            Err(TrySendError::Closed(_)) => return Err(MailboxManageError::Closed),
+            Err(TrySendError::Full(action)) => {
+                tracing::info!("MailboxManager::send_read_action: full");
+                action
+            }
+        };
         tokio::time::timeout(MAILBOX_STATE_READ_TIMEOUT, self.sender.send(action))
             .await
             .map_err(|_| {
@@ -71,6 +79,14 @@ impl MailboxManager {
     }
 
     async fn send_write_action(&self, action: Action) -> Result<(), MailboxManageError> {
+        let action = match self.sender.try_send(action) {
+            Ok(_) => return Ok(()),
+            Err(TrySendError::Closed(_)) => return Err(MailboxManageError::Closed),
+            Err(TrySendError::Full(action)) => {
+                tracing::info!("MailboxManager::send_write_action: full");
+                action
+            }
+        };
         tokio::time::timeout(MAILBOX_STATE_WRITE_TIMEOUT, self.sender.send(action))
             .await
             .map_err(|_| {
@@ -222,10 +238,12 @@ pub struct MailBoxState {
 }
 
 type PreviewMap = std::collections::HashMap<ChannelUserId, EncodedUpdate, ahash::RandomState>;
+type DiffMap = std::collections::HashMap<ChannelUserId, EncodedUpdate, ahash::RandomState>;
 
 fn on_update(
     updates: &mut BTreeMap<EventId, EncodedUpdate>,
     preview_map: &mut PreviewMap,
+    diff_map: &mut DiffMap,
     mut encoded_update: EncodedUpdate,
 ) {
     use super::types::UpdateBody::*;
@@ -238,7 +256,39 @@ fn on_update(
                     return;
                 }
             }
+            if let Some(diff) = diff_map.get(&key) {
+                if let UpdateBody::Diff { diff, .. } = &diff.update.body {
+                    if diff.payload.id != preview.id
+                        || diff.payload.reference_version != preview.version
+                    {
+                        diff_map.remove(&key);
+                    }
+                };
+            }
             preview_map.insert(key, encoded_update);
+        }
+        | Diff {
+            channel_id, diff, ..
+        } => {
+            let key = ChannelUserId::new(*channel_id, diff.sender);
+            let Some(reference_preview_update) = preview_map.get(&key) else {
+                return;
+            };
+            if reference_preview_update.update.id >= update.id {
+                return;
+            }
+            let UpdateBody::MessagePreview {
+                preview: reference_preview,
+                ..
+            } = &reference_preview_update.update.body
+            else {
+                return;
+            };
+            if reference_preview.version != diff.payload.reference_version {
+                return;
+            }
+
+            diff_map.insert(key, encoded_update);
         }
         | NewMessage {
             channel_id,
@@ -324,7 +374,11 @@ fn on_update(
     }
 }
 
-fn cleanup(updates: &mut BTreeMap<EventId, EncodedUpdate>, preview_map: &mut PreviewMap) {
+fn cleanup(
+    updates: &mut BTreeMap<EventId, EncodedUpdate>,
+    preview_map: &mut PreviewMap,
+    diff_map: &mut DiffMap,
+) {
     use super::types::UpdateBody::*;
 
     let now = timestamp();
@@ -352,33 +406,65 @@ fn cleanup(updates: &mut BTreeMap<EventId, EncodedUpdate>, preview_map: &mut Pre
         _ => false,
     });
     if preview_map.capacity() > 64 {
+        tracing::info!(
+            "Shrinking preview map from {} to {}",
+            preview_map.capacity(),
+            64
+        );
         preview_map.shrink_to_fit();
     }
+    diff_map.retain(|_, diff_update| match &diff_update.update.body {
+        | Diff {
+            channel_id, diff, ..
+        } => {
+            let key = ChannelUserId::new(*channel_id, diff.sender);
+            let Some(reference_preview_update) = preview_map.get(&key) else {
+                return false;
+            };
+            let UpdateBody::MessagePreview { preview, .. } = &reference_preview_update.update.body
+            else {
+                return false;
+            };
+            diff.payload.id == preview.id && diff.payload.reference_version == preview.version
+        }
+        _ => false,
+    });
 }
 
 impl MailBoxState {
     pub fn new(id: Uuid) -> Self {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Action>(32);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Action>(1024);
         let manager = MailboxManager::new(id, tx);
         let span = tracing::info_span!("MailboxState", mailbox_id = %id);
         tokio::spawn(async move {
             let mut updates: BTreeMap<EventId, EncodedUpdate> = BTreeMap::new();
             let mut preview_map = PreviewMap::with_hasher(ahash::RandomState::new());
+            let mut diff_map = DiffMap::with_hasher(ahash::RandomState::new());
             let mut last_activity_at = std::time::Instant::now();
             let mut members_state = members::MembersCache::new();
             let mut status_state = super::status::StatusState::new(id);
             let mut broadcast_status_interval = tokio::time::interval(std::time::Duration::from_secs(12));
             let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(120));
             let mut start_at = timestamp();
+            let mut last_pending_actions_warned = 0;
             loop {
                 tokio::select! {
                     Some(action) = rx.recv() => {
+                        let pending = rx.len();
+                        if pending > 256 && (pending - last_pending_actions_warned) > 8 {
+                            tracing::info!(pending, "Too many pending actions");
+                            last_pending_actions_warned = pending;
+                        }
+                        let start = std::time::Instant::now();
                         match action {
                             Action::Query(sender) => {
                                 last_activity_at = std::time::Instant::now();
                                 let mut updates = updates.iter().map(|(event_id, value)| (*event_id, value.encoded.clone())).collect::<BTreeMap<EventId, Utf8Bytes>>();
                                 for preview in preview_map.values() {
                                     updates.insert(preview.update.id, preview.encoded.clone());
+                                }
+                                for diff in diff_map.values() {
+                                    updates.insert(diff.update.id, diff.encoded.clone());
                                 }
                                 sender.send(CachedUpdates {
                                     updates,
@@ -387,7 +473,12 @@ impl MailBoxState {
                             }
                             Action::Update(encoded_update) => {
                                 last_activity_at = std::time::Instant::now();
-                                on_update(&mut updates, &mut preview_map, *encoded_update);
+                                let update_name = encoded_update.update.name();
+                                on_update(&mut updates, &mut preview_map, &mut diff_map, *encoded_update);
+                                let elapsed = start.elapsed();
+                                if elapsed > std::time::Duration::from_millis(25) {
+                                    tracing::warn!(mailbox_id = %id, update_name, "Update took too long to process: {:?}", elapsed);
+                                }
                             }
                             Action::Members(action) => {
                                 members_state.update(action);
@@ -401,6 +492,7 @@ impl MailBoxState {
                         status_state.update(StatusAction::Broadcast);
                     }
                     _ = cleanup_interval.tick() => {
+                        // If there are still actions to process, skip cleanup
                         if !rx.is_empty() {
                             continue;
                         }
@@ -410,7 +502,7 @@ impl MailBoxState {
                             break;
                         } else {
                             let before_size = updates.len();
-                            cleanup(&mut updates, &mut preview_map);
+                            cleanup(&mut updates, &mut preview_map, &mut diff_map);
                             let after_size = updates.len();
                             if after_size != before_size {
                                 tracing::info!(mailbox_id = %id, "Cleaned up {} updates", before_size - after_size);

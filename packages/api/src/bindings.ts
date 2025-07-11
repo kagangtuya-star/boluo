@@ -77,6 +77,7 @@ export type ChildText = { type: 'Text' } & Span;
 
 export type ClientEvent =
   | { type: 'PREVIEW'; preview: PreviewPost }
+  | { type: 'DIFF'; preview: PreviewDiffPost }
   | { type: 'STATUS'; kind: StatusKind; focus: string[] };
 
 export type CocRoll = { subType: CocRollSubType; target?: PureExprNode | null };
@@ -332,18 +333,18 @@ export type Message = {
   id: string;
   senderId: string;
   channelId: string;
-  parentMessageId: string | null;
+  parentMessageId?: string | null;
   name: string;
-  mediaId: string | null;
+  mediaId?: string | null;
   seed: number[];
-  inGame: boolean;
-  isAction: boolean;
-  isMaster: boolean;
-  pinned: boolean;
-  tags: string[];
-  folded: boolean;
+  inGame?: boolean;
+  isAction?: boolean;
+  isMaster?: boolean;
+  pinned?: boolean;
+  tags?: string[];
+  folded?: boolean;
   text: string;
-  whisperToUsers: string[] | null;
+  whisperToUsers?: string[] | null;
   entities: Entities;
   created: string;
   modified: string;
@@ -392,32 +393,77 @@ export type PreSignResult = { url: string; mediaId: string };
 
 export type Preview = {
   id: string;
+  /**
+   * The version of the preview
+   *
+   * Every edit will increase the version.
+   *
+   * Start from 1.
+   */
+  v?: number;
   senderId: string;
   channelId: string;
-  parentMessageId: string | null;
+  parentMessageId?: string | null;
   name: string;
-  mediaId: string | null;
-  inGame: boolean;
-  isAction: boolean;
-  isMaster: boolean;
-  clear: boolean;
-  text: string | null;
-  whisperToUsers: string[] | null;
+  mediaId?: string | null;
+  inGame?: boolean;
+  isAction?: boolean;
+  isMaster?: boolean;
+  clear?: boolean;
+  text?: string | null;
+  whisperToUsers?: string[] | null;
   entities: Entities;
   pos: number;
-  editFor: string | null;
-  edit: PreviewEdit | null;
+  editFor?: string | null;
+  edit?: PreviewEdit | null;
+};
+
+export type PreviewDiff = { sender: string; _: PreviewDiffPost };
+
+export type PreviewDiffOp =
+  | { type: 'SPLICE'; i: number; len: number; _: string }
+  | { type: 'A'; _: string }
+  | { type: 'NAME'; name: string };
+
+export type PreviewDiffPost = {
+  /**
+   * Channel ID
+   */
+  ch: string;
+  /**
+   * The id of the preview that is being edited
+   */
+  id: string;
+  /**
+   * The version of the diff reference
+   */
+  ref: number;
+  /**
+   * The version of the diff
+   *
+   * Every edit will increase the version.
+   */
+  v?: number;
+  /**
+   * The operation of the diff
+   */
+  op: PreviewDiffOp;
+  /**
+   * Changed entities
+   */
+  '~'?: [number, Entity][];
 };
 
 export type PreviewEdit = { time: string; p: number; q: number };
 
 export type PreviewPost = {
   id: string;
+  v?: number;
   channelId: string;
   name: string;
   mediaId: string | null;
-  inGame: boolean;
-  isAction: boolean;
+  inGame?: boolean;
+  isAction?: boolean;
   text: string | null;
   clear?: boolean;
   entities: Entities;
@@ -521,6 +567,7 @@ export type UpdateBody =
   | { type: 'MESSAGE_DELETED'; messageId: string; channelId: string; pos: number }
   | { type: 'MESSAGE_EDITED'; channelId: string; message: Message; oldPos: number }
   | { type: 'MESSAGE_PREVIEW'; channelId: string; preview: Preview }
+  | { type: 'DIFF'; channelId: string; diff: PreviewDiff }
   | { type: 'CHANNEL_DELETED'; channelId: string }
   | { type: 'CHANNEL_EDITED'; channelId: string; channel: Channel }
   | { type: 'MEMBERS'; channelId: string; members: MemberWithUser[] }
