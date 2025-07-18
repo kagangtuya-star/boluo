@@ -93,3 +93,68 @@ pub struct ResetPasswordConfirm {
 pub struct ResetPasswordTokenCheck {
     pub token: String,
 }
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyEmail {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ResendEmailVerification {
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscourseConnect {
+    pub sso: String,
+    pub sig: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiscoursePayload {
+    pub nonce: String,
+    pub return_sso_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiscourseResponse {
+    pub nonce: String,
+    pub external_id: String,
+    pub email: String,
+    pub username: String,
+    pub name: String,
+    pub bio: Option<String>,
+    pub avatar_url: Option<String>,
+    pub require_activation: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ResendEmailVerificationResult {
+    AlreadyVerified,
+    Sent,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailVerificationStatus {
+    pub is_verified: bool,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestEmailChange {
+    pub new_email: String,
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmEmailChange {
+    pub token: String,
+}

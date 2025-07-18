@@ -28,16 +28,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: process.env.BACKEND_URL || 'https://production.boluo.chat',
+        target: process.env.BACKEND_URL || 'https://production.boluochat.com',
         changeOrigin: true,
         secure: false,
         ws: true,
       },
     },
-  },
-
-  define: {
-    'process.env.PUBLIC_BACKEND_URL': JSON.stringify(process.env.PUBLIC_BACKEND_URL),
   },
 
   build: {

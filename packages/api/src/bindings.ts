@@ -91,6 +91,8 @@ export type CocRollResult = { subType: CocRollSubType; target?: PureExprNode | n
 
 export type CocRollSubType = 'NORMAL' | 'BONUS' | 'BONUS_2' | 'PENALTY' | 'PENALTY_2';
 
+export type ConfirmEmailChange = { token: string };
+
 export type ConnectionError = 'NOT_FOUND' | 'NO_PERMISSION' | 'INVALID_TOKEN' | 'UNEXPECTED';
 
 export type ConnectionState = {
@@ -139,6 +141,8 @@ export type DicePoolResult = {
   critical?: number | null;
   fumble?: number | null;
 } & { value: number; values: number[] };
+
+export type DiscourseConnect = { sso: string; sig: string };
 
 export type DiskInfo = { name: string; mount_point: string; available: number; total: number };
 
@@ -190,6 +194,8 @@ export type EditUser = {
   avatar: string | null;
   defaultColor: string | null;
 };
+
+export type EmailVerificationStatus = { isVerified: boolean };
 
 export type Entities = Entity[];
 
@@ -497,6 +503,12 @@ export type RepeatResult = { node: ExprNode; count: number } & {
   value: number;
 };
 
+export type RequestEmailChange = { newEmail: string; lang?: string | null };
+
+export type ResendEmailVerification = { lang?: string | null };
+
+export type ResendEmailVerificationResult = 'ALREADY_VERIFIED' | 'SENT';
+
 export type ResetPassword = { email: string; lang: string | null };
 
 export type ResetPasswordConfirm = { token: string; password: string };
@@ -609,3 +621,5 @@ export type User = {
 };
 
 export type UserStatus = { timestamp: number; kind: StatusKind; focus: string[] };
+
+export type VerifyEmail = { token: string };
