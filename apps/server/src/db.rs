@@ -6,11 +6,12 @@ pub fn get_postgres_url() -> String {
     std::env::var("DATABASE_URL").expect("Failed to load Postgres connect URL")
 }
 
-#[tracing::instrument]
 pub async fn get() -> sqlx::Pool<sqlx::Postgres> {
     static POOL: OnceLock<sqlx::Pool<sqlx::Postgres>> = OnceLock::new();
     const LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 5);
+    const ACQUIRE_SLOW_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(800);
+    const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
     if let Some(pool) = POOL.get() {
         pool.clone()
     } else {
@@ -26,12 +27,16 @@ pub async fn get() -> sqlx::Pool<sqlx::Postgres> {
                     Ok(())
                 })
             })
-            .max_connections(20)
+            .max_connections(32)
+            .min_connections(4)
+            .acquire_slow_threshold(ACQUIRE_SLOW_THRESHOLD)
+            .acquire_timeout(ACQUIRE_TIMEOUT)
             .max_lifetime(Some(LIFETIME))
             .idle_timeout(Some(IDLE_TIMEOUT))
             .connect(&get_postgres_url())
             .await
             .expect("Cannot connect to database");
+
         POOL.get_or_init(move || pool).clone()
     }
 }

@@ -163,21 +163,22 @@ impl BasicInfo {
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub media_url: String,
-    pub app_url: String,
-    pub site_url: String,
+    #[serde(default)]
+    pub media_url: Option<String>,
+    #[serde(default)]
+    pub app_url: Option<String>,
+    #[serde(default)]
+    pub site_url: Option<String>,
+    #[serde(default)]
     pub sentry_dsn: Option<String>,
 }
 
 impl AppSettings {
     pub fn new() -> Self {
-        let media_url = std::env::var("PUBLIC_MEDIA_URL")
-            .unwrap_or_else(|_| "https://media.boluo.chat".to_string());
-        let app_url =
-            std::env::var("APP_URL").unwrap_or_else(|_| "https://boluo.kagangtuya.top".to_string());
-        let site_url =
-            std::env::var("SITE_URL").unwrap_or_else(|_| "https://boluosite.kagangtuya.top".to_string());
-        let sentry_dsn = std::env::var("SENTRY_DSN").ok();
+        let media_url = crate::context::PUBLIC_MEDIA_URL.clone();
+        let app_url = crate::context::APP_URL.clone();
+        let site_url = crate::context::SITE_URL.clone();
+        let sentry_dsn = crate::context::SENTRY_DSN.clone();
         AppSettings {
             media_url,
             app_url,
