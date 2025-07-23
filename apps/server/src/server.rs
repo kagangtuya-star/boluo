@@ -6,14 +6,15 @@
 )]
 
 use std::env;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 use clap::Parser;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::ORIGIN;
-use hyper::server::conn::http1;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as AutoBuilder;
+use metrics::{counter, gauge};
 use tokio::net::TcpListener;
 
 use hyper::Request;
@@ -40,6 +41,7 @@ mod pos;
 mod pubsub;
 mod redis;
 mod s3;
+mod server_metrics;
 mod session;
 mod shutdown;
 mod spaces;
@@ -207,8 +209,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    use sysinfo::System;
     use tracing_subscriber::filter::{EnvFilter, LevelFilter};
-
     dotenvy::from_filename(".env.local").ok();
     dotenvy::dotenv().ok();
     let filter = EnvFilter::builder()
@@ -230,15 +232,7 @@ async fn main() {
 
     let ip_addr: IpAddr = {
         let host_env = env::var("HOST").unwrap_or("127.0.0.1".to_string());
-        let ipv4_addr: Result<Ipv4Addr, _> = host_env.parse();
-        if let Ok(addr) = ipv4_addr {
-            IpAddr::V4(addr)
-        } else {
-            let ipv6_addr: Result<Ipv6Addr, _> = host_env.parse();
-            ipv6_addr
-                .map(IpAddr::V6)
-                .expect("HOST must be a valid IPv4 or IPv6 address")
-        }
+        host_env.parse().expect("HOST must be a valid IP address")
     };
 
     let socket = SocketAddr::new(ip_addr, port);
@@ -254,21 +248,60 @@ async fn main() {
     redis::check().await;
     tracing::info!("Redis is ready");
 
+    if context::SITE_URL.is_none() {
+        tracing::error!("SITE_URL is not set");
+    }
+    if context::APP_URL.is_none() {
+        tracing::error!("APP_URL is not set");
+    }
+    if context::PUBLIC_MEDIA_URL.is_none() {
+        tracing::error!("PUBLIC_MEDIA_URL is not set");
+    }
+
+    server_metrics::init_metrics().await;
+
     if args.check {
         return;
     }
 
+    if let Ok(exporter_listen) = std::env::var("PROMETHEUS_EXPORTER") {
+        let addr = exporter_listen
+            .parse::<SocketAddr>()
+            .expect("Invalid address for Prometheus exporter");
+        metrics_exporter_prometheus::PrometheusBuilder::new()
+            .with_http_listener(addr)
+            .install()
+            .expect("Failed to install Prometheus metrics exporter");
+        tracing::info!("Prometheus metrics exporter installed on {}", addr);
+
+        tokio::task::spawn(
+            tokio_metrics::RuntimeMetricsReporterBuilder::default()
+                .with_interval(std::time::Duration::from_secs(15))
+                .describe_and_run(),
+        );
+    }
     // https://tokio.rs/tokio/topics/shutdown
     let mut terminate_stream =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to create signal stream");
-    let http = http1::Builder::new();
 
+    server_metrics::start_update_metrics();
     tracing::info!("Startup ID: {}", events::startup_id());
+
+    tracing::info!("Kernel: {}", System::kernel_long_version());
+
+    tracing::info!(
+        "Open file limit: {}",
+        System::open_files_limit().unwrap_or(0)
+    );
+
+    let timeout_counter = metrics::counter!("boluo_server_tcp_connections_timeout_total");
+    let error_counter = metrics::counter!("boluo_server_tcp_connections_error_total");
+
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
-                handle_connection(accept_result, &http).await;
+                handle_connection(accept_result, timeout_counter.clone(), error_counter.clone()).await;
             },
             _ = terminate_stream.recv() => {
                 tracing::info!("Graceful shutdown signal received");
@@ -283,22 +316,47 @@ async fn main() {
 
 async fn handle_connection(
     accept_result: Result<(tokio::net::TcpStream, SocketAddr), std::io::Error>,
-    http: &http1::Builder,
+    timeout_counter: metrics::Counter,
+    error_counter: metrics::Counter,
 ) {
     match accept_result {
         Ok((stream, addr)) => {
             let io = TokioIo::new(stream);
-            let conn = http
-                .serve_connection(io, service_fn(handler))
-                .with_upgrades();
             tokio::task::spawn(async move {
-                if let Err(err) = conn.await {
-                    tracing::warn!(error = %err, addr = %addr, "HTTP connection error");
+                let start_time = std::time::Instant::now();
+                let tcp_connections_active = gauge!("boluo_server_tcp_connections_active");
+                counter!("boluo_server_tcp_connections_total").increment(1);
+                tcp_connections_active.increment(1);
+
+                let connection_timeout = std::time::Duration::from_secs(30);
+
+                let builder = AutoBuilder::new(TokioExecutor::new());
+                let connection_future =
+                    builder.serve_connection_with_upgrades(io, service_fn(handler));
+
+                // Maybe we should use hyper-timeout
+                // https://crates.io/crates/hyper-timeout
+                let result = tokio::time::timeout(connection_timeout, connection_future).await;
+
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        tracing::warn!(error = %err, addr = %addr, "HTTP/1 connection error");
+                        error_counter.increment(1);
+                    }
+                    Err(_) => {
+                        tracing::info!(addr = %addr, "HTTP/1 connection timeout after {}s", connection_timeout.as_secs());
+                        timeout_counter.increment(1);
+                    }
                 }
+
+                tcp_connections_active.decrement(1);
+                metrics::histogram!("boluo_server_tcp_connection_duration_ms")
+                    .record(start_time.elapsed().as_millis() as f64);
             });
         }
         Err(err) => {
-            tracing::warn!(error = %err, "Failed to accept connection");
+            tracing::error!(error = %err, "Failed to accept connection");
         }
     }
 }
