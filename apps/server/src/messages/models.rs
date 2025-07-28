@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, ModelError, ValidationFailed};
 use crate::pos::{CHANNEL_POS_MANAGER, FailToFindIntermediate, check_pos, find_intermediate};
-use crate::utils::merge_blank;
+use crate::utils::{is_false, merge_blank};
 use crate::validators::CHARACTER_NAME;
 
 use crate::notify;
@@ -72,28 +72,28 @@ pub struct Message {
     pub id: Uuid,
     pub sender_id: Uuid,
     pub channel_id: Uuid,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_message_id: Option<Uuid>,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_id: Option<Uuid>,
     pub seed: Vec<u8>,
     #[serde(skip)]
     pub deleted: bool,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub in_game: bool,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub is_action: bool,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub is_master: bool,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub pinned: bool,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub folded: bool,
     pub text: String,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub whisper_to_users: Option<Vec<Uuid>>,
     pub entities: Entities,
     pub created: DateTime<Utc>,
@@ -147,15 +147,17 @@ impl Message {
         limit: i64,
         current_user_id: Option<&Uuid>,
     ) -> Result<Vec<Message>, ModelError> {
+        use futures::TryStreamExt as _;
         if !(1..=256).contains(&limit) {
             return Err(ValidationFailed("illegal limit range").into());
         }
-        let mut messages =
+        let mut stream =
             sqlx::query_file_scalar!("sql/messages/get_by_channel.sql", channel_id, before, limit)
-                .fetch_all(db)
-                .await?;
-        for message in messages.iter_mut() {
+                .fetch(db);
+        let mut messages = Vec::new();
+        while let Some(mut message) = stream.try_next().await? {
             message.hide(current_user_id);
+            messages.push(message);
         }
         Ok(messages)
     }
@@ -166,10 +168,23 @@ impl Message {
         _hide: bool,
         after: Option<DateTime<Utc>>,
     ) -> Result<Vec<Message>, sqlx::Error> {
-        // TODO: chunk
-        sqlx::query_file_scalar!("sql/messages/export.sql", channel_id, after)
-            .fetch_all(db)
-            .await
+        use futures::TryStreamExt as _;
+
+        let mut stream =
+            sqlx::query_file_scalar!("sql/messages/export.sql", channel_id, after).fetch(db);
+
+        static UP_TO: usize = 65535;
+
+        let mut messages = Vec::new();
+
+        while let Some(message) = stream.try_next().await? {
+            if messages.len() >= UP_TO {
+                break;
+            }
+            messages.push(message);
+        }
+
+        Ok(messages)
     }
 
     pub async fn create(

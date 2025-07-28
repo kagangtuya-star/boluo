@@ -38,6 +38,17 @@ pub fn ok_response<T: Serialize>(value: T) -> hyper::Response<Vec<u8>> {
         .unwrap_or_else(err_response)
 }
 
+/// Serialize the value in a blocking task.
+pub async fn response<T: Serialize + Send + 'static>(
+    value: Result<T, AppError>,
+) -> Result<hyper::Response<Vec<u8>>, AppError> {
+    let value = value?;
+    let response = tokio::task::spawn_blocking(move || ok_response(value))
+        .await
+        .map_err(|e| AppError::Unexpected(e.into()))?;
+    Ok(response)
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct WebError {
     code: &'static str,
@@ -116,6 +127,33 @@ where
         tracing::error!(error = %e, "Failed to parse the request body");
         AppError::BadRequest("Failed to parse the request body".to_string())
     })
+}
+
+pub async fn parse_large_body<T: Send + 'static>(
+    req: hyper::Request<impl Body>,
+) -> Result<Box<T>, AppError>
+where
+    for<'de> T: Deserialize<'de>,
+{
+    use http_body_util::BodyExt;
+    let body = req
+        .into_body()
+        .collect()
+        .await
+        .map_err(|_| {
+            tracing::error!("Failed to read the request body");
+            AppError::BadRequest("Failed to read the request body".to_string())
+        })?
+        .to_bytes();
+    tokio::task::spawn_blocking(move || {
+        serde_json::from_slice(&body).map(Box::new).map_err(|e| {
+            tracing::error!(error = %e, "Failed to parse the request body");
+            AppError::BadRequest("Failed to parse the request body".to_string())
+        })
+    })
+    .await
+    .map_err(|e| AppError::Unexpected(e.into()))
+    .flatten()
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
