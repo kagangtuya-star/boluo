@@ -9,6 +9,7 @@ use std::env;
 use std::net::{IpAddr, SocketAddr};
 
 use clap::Parser;
+use futures::pin_mut;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::ORIGIN;
@@ -16,6 +17,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use metrics::{counter, gauge};
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 use hyper::Request;
 use hyper::service::service_fn;
@@ -317,6 +319,9 @@ async fn handle_connection(
 ) {
     match accept_result {
         Ok((stream, addr)) => {
+            if let Err(e) = stream.set_nodelay(true) {
+                tracing::error!(error = %e, "Failed to set TCP_NODELAY");
+            }
             let io = TokioIo::new(stream);
             tokio::task::spawn(async move {
                 let start_time = std::time::Instant::now();
@@ -324,27 +329,77 @@ async fn handle_connection(
                 counter!("boluo_server_tcp_connections_total").increment(1);
                 tcp_connections_active.increment(1);
 
-                let connection_timeout = std::time::Duration::from_secs(30);
+                let connection_timeout = std::time::Duration::from_secs(32);
+
+                let (timeout_reset_tx, mut timeout_reset_rx) =
+                    watch::channel(std::time::Instant::now());
+
+                let handler_with_reset = move |req: Request<Incoming>| {
+                    let tx = timeout_reset_tx.clone();
+                    async move {
+                        // Reset timeout on each request
+                        let _ = tx.send(std::time::Instant::now());
+                        handler(req).await
+                    }
+                };
 
                 let builder = AutoBuilder::new(TokioExecutor::new());
                 let connection_future =
-                    builder.serve_connection_with_upgrades(io, service_fn(handler));
+                    builder.serve_connection_with_upgrades(io, service_fn(handler_with_reset));
 
-                // Maybe we should use hyper-timeout
-                // https://crates.io/crates/hyper-timeout
-                let result = tokio::time::timeout(connection_timeout, connection_future).await;
+                pin_mut!(connection_future);
 
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        tracing::warn!(error = %err, addr = %addr, "HTTP/1 connection error");
-                        error_counter.increment(1);
+                let timeout_task = async move {
+                    let mut last_reset = std::time::Instant::now();
+                    loop {
+                        let remaining_time =
+                            connection_timeout.saturating_sub(last_reset.elapsed());
+
+                        if remaining_time.is_zero() {
+                            break;
+                        }
+
+                        tokio::select! {
+                            _ = tokio::time::sleep(remaining_time) => {
+                                break;
+                            }
+                            result = timeout_reset_rx.changed() => {
+                                if result.is_ok() {
+                                    last_reset = *timeout_reset_rx.borrow_and_update();
+                                } else {
+                                    tracing::warn!(addr = %addr, "HTTP connection timeout reset channel closed");
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    Err(_) => {
-                        tracing::info!(addr = %addr, "HTTP/1 connection timeout after {}s", connection_timeout.as_secs());
+                };
+
+                tokio::select! {
+                    conn_result = &mut connection_future => {
+                        match conn_result {
+                            Ok(()) => {},
+                            Err(err) => {
+                                tracing::warn!(error = %err, addr = %addr, "HTTP connection error");
+                                error_counter.increment(1);
+                            },
+                        }
+                    }
+                    _ = shutdown::SHUTDOWN.notified() => {
+                        connection_future.as_mut().graceful_shutdown();
+                    }
+                    _ = timeout_task => {
                         timeout_counter.increment(1);
+
+                        connection_future.as_mut().graceful_shutdown();
+
+                        if let Err(err) = connection_future.await {
+                            tracing::warn!(error = %err, addr = %addr, "Error during graceful shutdown");
+                        }
+
+                        tracing::info!(addr = %addr, "HTTP connection timeout after {}s", start_time.elapsed().as_secs());
                     }
-                }
+                };
 
                 tcp_connections_active.decrement(1);
                 metrics::histogram!("boluo_server_tcp_connection_duration_ms")
