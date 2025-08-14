@@ -153,6 +153,9 @@ pub async fn get_me(req: Request<impl Body>) -> Result<Response<Vec<u8>>, AppErr
 
 pub async fn login<B: Body>(req: Request<B>) -> Result<Response<Vec<u8>>, AppError> {
     use crate::session;
+    use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+    use std::num::NonZeroU32;
+
     let origin = req
         .headers()
         .get(hyper::header::ORIGIN)
@@ -160,10 +163,28 @@ pub async fn login<B: Body>(req: Request<B>) -> Result<Response<Vec<u8>>, AppErr
         .map(|s| s.to_string());
     let is_debug = req.headers().get("X-Debug").is_some();
     let form: Login = interface::parse_body(req).await?;
+
+    // Rate limiting for login attempts: 10 attempts per minute per username
+    static LOGIN_LIMITER: LazyLock<DefaultKeyedRateLimiter<String>> =
+        LazyLock::new(|| RateLimiter::keyed(Quota::per_minute(NonZeroU32::new(10).unwrap())));
+
+    // Normalize username for consistent rate limiting (case-insensitive, trimmed)
+    let username = if form.username.contains('@') {
+        form.username.trim().to_lowercase()
+    } else {
+        form.username.trim().to_string()
+    };
+    LOGIN_LIMITER.check_key(&username).map_err(|_| {
+        tracing::warn!(
+            username = %form.username,
+            "Login rate limit exceeded for username"
+        );
+        AppError::LimitExceeded("Too many login attempts, please try again later.")
+    })?;
     let pool = db::get().await;
     let mut conn = pool.acquire().await?;
     let login_failed_counter = metrics::counter!("boluo_server_users_login_failed_total");
-    let user = User::login(&mut *conn, &form.username, &form.password)
+    let user = User::login(&mut *conn, &username, &form.password)
         .await
         .inspect_err(
             |err| {
@@ -731,29 +752,19 @@ pub async fn discourse_login(req: Request<impl Body>) -> Result<Response<Vec<u8>
         "DISCOURSE_SSO_SECRET not configured".to_string(),
     ))?;
 
+    // Verify the signature
+    let key = hmac::Key::new(hmac::HMAC_SHA256, sso_secret.as_bytes());
+    let expected_sig = hex::encode(hmac::sign(&key, sso.as_bytes()).as_ref());
+    if sig != expected_sig {
+        return Err(AppError::BadRequest("Invalid signature".to_string()));
+    }
+
     // Decode the SSO payload
     let payload_bytes = base64_engine
         .decode(&sso)
         .map_err(|_| AppError::BadRequest("Invalid base64 payload".to_string()))?;
     let payload_str = String::from_utf8(payload_bytes)
         .map_err(|_| AppError::BadRequest("Invalid UTF-8 payload".to_string()))?;
-
-    // Verify the signature
-    let Ok((key, expected_sig)) = tokio::task::spawn_blocking(move || {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, sso_secret.as_bytes());
-        let expected_sig = hex::encode(hmac::sign(&key, sso.as_bytes()).as_ref());
-        (key, expected_sig)
-    })
-    .await
-    else {
-        return Err(AppError::Unexpected(anyhow::anyhow!(
-            "Failed to verify signature"
-        )));
-    };
-
-    if sig != expected_sig {
-        return Err(AppError::BadRequest("Invalid signature".to_string()));
-    }
 
     // Parse the payload parameters
     let payload: DiscoursePayload = serde_urlencoded::from_str(&payload_str)
@@ -821,52 +832,45 @@ pub async fn discourse_login(req: Request<impl Body>) -> Result<Response<Vec<u8>
         username = %user.username,
         "User authenticated for DiscourseConnect SSO"
     );
-    let Ok(redirect_url) = tokio::task::spawn_blocking(move || {
-        // Build avatar URL if user has avatar
-        let avatar_url = user
-            .avatar_id
-            .map(|avatar_id| format!("{}/{}", media_public_url().trim_end_matches('/'), avatar_id));
 
-        // Create response payload
-        let response_data = DiscourseResponse {
-            nonce: payload.nonce,
-            external_id: user.id.to_string(),
-            email: user.email,
-            username: user.username,
-            name: user.nickname,
-            require_activation: false,
-            bio: if user.bio.is_empty() {
-                None
-            } else {
-                Some(user.bio)
-            },
-            avatar_url,
-        };
+    // Build avatar URL if user has avatar
+    let avatar_url = user
+        .avatar_id
+        .map(|avatar_id| format!("{}/{}", media_public_url().trim_end_matches('/'), avatar_id));
 
-        // Encode the response
-        let response_payload = serde_urlencoded::to_string(&response_data).unwrap_or_default();
-        let response_base64 = base64_engine.encode(&response_payload);
-
-        // Sign the response
-        let response_sig = hex::encode(hmac::sign(&key, response_base64.as_bytes()).as_ref());
-
-        // Build the redirect URL
-        use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-        const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
-
-        let encoded_sso = utf8_percent_encode(&response_base64, FRAGMENT).to_string();
-        let redirect_url = format!(
-            "{}?sso={}&sig={}",
-            payload.return_sso_url, encoded_sso, response_sig
-        );
-        redirect_url
-    })
-    .await
-    else {
-        return Err(AppError::Unexpected(anyhow::anyhow!(
-            "Failed to build redirect URL"
-        )));
+    // Create response payload
+    let response_data = DiscourseResponse {
+        nonce: payload.nonce,
+        external_id: user.id.to_string(),
+        email: user.email,
+        username: user.username,
+        name: user.nickname,
+        require_activation: false,
+        bio: if user.bio.is_empty() {
+            None
+        } else {
+            Some(user.bio)
+        },
+        avatar_url,
     };
+
+    // Encode the response
+    let response_payload = serde_urlencoded::to_string(&response_data)
+        .map_err(|_| AppError::BadRequest("Failed to encode response".to_string()))?;
+    let response_base64 = base64_engine.encode(&response_payload);
+
+    // Sign the response
+    let response_sig = hex::encode(hmac::sign(&key, response_base64.as_bytes()).as_ref());
+
+    // Build the redirect URL
+    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+    const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+
+    let encoded_sso = utf8_percent_encode(&response_base64, FRAGMENT).to_string();
+    let redirect_url = format!(
+        "{}?sso={}&sig={}",
+        payload.return_sso_url, encoded_sso, response_sig
+    );
 
     tracing::info!(
         redirect_url = %redirect_url,

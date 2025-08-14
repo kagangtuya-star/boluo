@@ -1,4 +1,4 @@
-import { type NewMessage, type User, type EditMessage, JsonValue } from '@boluo/api';
+import { type NewMessage, type EditMessage, type MemberWithUser } from '@boluo/api';
 import { patch, post } from '@boluo/api-browser';
 import { useStore } from 'jotai';
 import { useCallback, useMemo, useRef } from 'react';
@@ -14,54 +14,64 @@ import { type ChatActionUnion } from '../../state/chat.actions';
 import { chatAtom } from '../../state/chat.atoms';
 import { timeout } from '@boluo/utils';
 import { type FailTo } from '../../state/channel.types';
+import { useIntl } from 'react-intl';
+import { useSetBanner } from '../../hooks/useBanner';
 
-export const useSend = (me: User) => {
+const SEND_TIMEOUT = 8000;
+
+export const useSend = () => {
   const channelId = useChannelId();
   const defaultInGame = useDefaultInGame();
+  const intl = useIntl();
   const { composeAtom, parsedAtom, checkComposeAtom, defaultDiceFaceRef } = useChannelAtoms();
   const store = useStore();
+
   const { data: queryChannelMembers } = useQueryChannelMembers(channelId);
-  const queryChannelMembersRef = useRef(queryChannelMembers);
-  queryChannelMembersRef.current = queryChannelMembers;
-  const { nickname } = me;
   const myMember = useMemo(() => {
     if (queryChannelMembers == null) return null;
-    return queryChannelMembers.members.find((member) => member.user.id === me.id) ?? null;
-  }, [me.id, queryChannelMembers]);
+    if (queryChannelMembers.selfIndex == null) return null;
+    return queryChannelMembers.members[queryChannelMembers.selfIndex] ?? null;
+  }, [queryChannelMembers]);
+  const channelMembersMap: Map<string, MemberWithUser> = useMemo(() => {
+    if (queryChannelMembers == null) return new Map();
+    return new Map(queryChannelMembers.members.map((member) => [member.user.username, member]));
+  }, [queryChannelMembers]);
+  const channelMembersMapRef = useRef(channelMembersMap);
+  channelMembersMapRef.current = channelMembersMap;
 
-  const usernameListToUserIdList = useCallback((usernames: string[]): string[] => {
-    const queryChannelMembers = queryChannelMembersRef.current;
-    if (queryChannelMembers == null) return [];
-    return usernames.flatMap((username) => {
-      const member = queryChannelMembers.members.find(
-        (member) => member.user.username === username,
-      );
-      if (member == null) return [];
-      return [member.user.id];
-    });
-  }, []);
+  const setBanner = useSetBanner();
 
   const send = useCallback(async () => {
     const sendStartTime = Date.now();
     if (myMember == null) {
-      recordWarn('Cannot find my channel member');
+      recordWarn('Can not find current user in channel');
+      setBanner({
+        level: 'ERROR',
+        content: intl.formatMessage({
+          defaultMessage: 'Can not send message, please check if you are in the channel.',
+        }),
+      });
       return;
     }
-    const compose = store.get(composeAtom);
+    const nickname = myMember.user.nickname;
+    const composeState = store.get(composeAtom);
     const parsed = store.get(parsedAtom);
     if (store.get(checkComposeAtom) != null) return;
-    const dispatch = (action: ComposeActionUnion) => store.set(composeAtom, action);
+    const composeDispatch = (action: ComposeActionUnion) => store.set(composeAtom, action);
     const chatDispatch = (action: ChatActionUnion) => store.set(chatAtom, action);
-    const isEditing = compose.edit != null;
-    dispatch({ type: 'sent', payload: { edit: isEditing } });
-    const { text, entities, whisperToUsernames } = parse(compose.source, true, {
+    composeDispatch({ type: 'sent', payload: { edit: composeState.edit != null } });
+    const { text, entities, whisperToUsernames } = parse(composeState.source, true, {
       defaultDiceFace: defaultDiceFaceRef.current,
-      resolveUsername: (username) => null,
+      resolveUsername: (username) => {
+        const member = channelMembersMapRef.current.get(username);
+        if (member == null) return null;
+        return member.user.nickname;
+      },
     });
     let name = nickname;
     const inGame = parsed.inGame ?? defaultInGame;
     if (inGame) {
-      const inputedName = compose.inputedName.trim();
+      const inputedName = composeState.inputedName.trim();
       if (inputedName === '') {
         name = myMember.channel.characterName;
       } else {
@@ -71,22 +81,31 @@ export const useSend = (me: User) => {
     let payload:
       | { type: 'NEW'; newMessage: NewMessage }
       | { type: 'EDIT'; editMessage: EditMessage };
-    if (!isEditing) {
+    if (composeState.edit == null) {
+      const usernameListToUserIdList = (usernames: string[]): string[] => {
+        if (channelMembersMapRef.current.size === 0 || usernames.length === 0) {
+          return [];
+        }
+        return usernames.flatMap((username) => {
+          const member = channelMembersMapRef.current.get(username);
+          if (member == null) return [];
+          return [member.user.id];
+        });
+      };
       payload = {
         type: 'NEW',
         newMessage: {
           messageId: null,
-          previewId: compose.previewId,
+          previewId: composeState.previewId,
           channelId,
           name,
           text,
           entities,
           inGame,
           isAction: parsed.isAction,
-          mediaId: null,
-          pos: null,
-          whisperToUsers: whisperToUsernames ? usernameListToUserIdList(whisperToUsernames) : null,
-          color: '',
+          whisperToUsers: whisperToUsernames
+            ? usernameListToUserIdList(whisperToUsernames)
+            : undefined,
         },
       };
       chatDispatch({
@@ -94,20 +113,22 @@ export const useSend = (me: User) => {
         payload: {
           newMessage: payload.newMessage,
           sendTime: sendStartTime,
-          media: compose.media instanceof File ? compose.media : null,
+          media: composeState.media instanceof File ? composeState.media : null,
+          composeState,
         },
       });
     } else {
       payload = {
         type: 'EDIT',
         editMessage: {
-          messageId: compose.previewId,
+          // In edit mode, the `compose.previewId` is the message id.
+          messageId: composeState.previewId,
           name,
-          text: parsed.text,
-          entities: parsed.entities,
+          text,
+          entities,
           inGame,
           isAction: parsed.isAction,
-          mediaId: typeof compose.media === 'string' ? compose.media : null,
+          mediaId: typeof composeState.media === 'string' ? composeState.media : null,
           color: '',
         },
       };
@@ -116,73 +137,94 @@ export const useSend = (me: User) => {
         payload: {
           editMessage: payload.editMessage,
           sendTime: sendStartTime,
-          media: compose.media instanceof File ? compose.media : null,
+          media: composeState.media instanceof File ? composeState.media : null,
+          composeState,
         },
       });
     }
 
     let uploadResult: Awaited<ReturnType<typeof upload>> | null = null;
-    if (compose.media instanceof File) {
-      uploadResult = await upload(compose.media);
+    if (composeState.media instanceof File) {
+      uploadResult = await upload(composeState.media);
     }
     if (uploadResult?.isOk === false) {
       let key: string;
       let failTo: FailTo;
       if (payload.type === 'NEW') {
-        key = compose.previewId;
-        failTo = { type: 'SEND', onUpload: true };
+        key = composeState.previewId;
+        failTo = { type: 'SEND', onUpload: uploadResult.err };
       } else {
         key = payload.editMessage.messageId;
-        failTo = { type: 'EDIT', onUpload: true };
+        failTo = { type: 'EDIT', onUpload: uploadResult.err };
       }
       chatDispatch({ type: 'fail', payload: { failTo, key } });
       return;
     }
     const mediaId = uploadResult?.isOk ? uploadResult.some.mediaId : null;
     if (payload.type === 'EDIT') {
-      if (mediaId) payload.editMessage.mediaId = mediaId;
-      chatDispatch({
-        type: 'messageEditing',
-        payload: { editMessage: payload.editMessage, sendTime: sendStartTime, media: null },
-      });
+      if (mediaId) {
+        payload.editMessage.mediaId = mediaId;
+        chatDispatch({
+          type: 'messageEditing',
+          payload: {
+            editMessage: payload.editMessage,
+            sendTime: sendStartTime,
+            media: null,
+            composeState,
+          },
+        });
+      }
       const result = await Promise.race([
         patch('/messages/edit', null, payload.editMessage),
-        timeout(8000),
+        timeout(SEND_TIMEOUT),
       ]);
       if (result === 'TIMEOUT' || !result.isOk) {
         chatDispatch({
           type: 'fail',
-          payload: { failTo: { type: 'EDIT' }, key: payload.editMessage.messageId },
+          payload: {
+            failTo: { type: 'EDIT' },
+            key: payload.editMessage.messageId,
+          },
         });
       }
     } else {
-      if (mediaId) payload.newMessage.mediaId = mediaId;
-      chatDispatch({
-        type: 'messageSending',
-        payload: { newMessage: payload.newMessage, sendTime: sendStartTime, media: null },
-      });
+      if (mediaId) {
+        payload.newMessage.mediaId = mediaId;
+        chatDispatch({
+          type: 'messageSending',
+          payload: {
+            newMessage: payload.newMessage,
+            sendTime: sendStartTime,
+            media: null,
+            composeState,
+          },
+        });
+      }
       const result = await Promise.race([
         post('/messages/send', null, payload.newMessage),
-        timeout(8000),
+        timeout(SEND_TIMEOUT),
       ]);
       if ((result === 'TIMEOUT' || !result.isOk) && payload.newMessage.previewId) {
         chatDispatch({
           type: 'fail',
-          payload: { failTo: { type: 'SEND' }, key: payload.newMessage.previewId },
+          payload: {
+            failTo: { type: 'SEND' },
+            key: payload.newMessage.previewId,
+          },
         });
       }
     }
   }, [
-    channelId,
-    checkComposeAtom,
+    myMember,
+    store,
     composeAtom,
+    parsedAtom,
+    checkComposeAtom,
     defaultDiceFaceRef,
     defaultInGame,
-    myMember,
-    nickname,
-    parsedAtom,
-    store,
-    usernameListToUserIdList,
+    setBanner,
+    intl,
+    channelId,
   ]);
 
   return send;
