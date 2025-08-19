@@ -77,7 +77,7 @@ const MAX_FIND_LENGTH = 64;
 export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) => {
   const { composeAtom, parsedAtom, composeFocusedAtom, hideSelfPreviewTimeoutAtom } =
     useChannelAtoms();
-  const fixHeight = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
+  const isMobileLayout = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
   const setSelfPreviewLock = useSetAtom(hideSelfPreviewTimeoutAtom);
   const ref = useRef<RichTextareaHandle | null>(null);
   const channelId = useChannelId();
@@ -86,17 +86,17 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
   const store = useStore();
   // 添加一个 ref 来跟踪占位符状态
   const placeholderAddedRef = useRef(false);
+
   const style = useMemo(
     (): React.CSSProperties => ({
       width: '100%',
-      height: fixHeight ? '12rem' : undefined,
-      maxHeight: fixHeight ? undefined : '10rem',
+      maxHeight: isMobileLayout ? '12rem' : '10rem', // -> 为移动端和桌面端都设置一个最大高度
       scrollbarWidth: 'none',
       WebkitTextSizeAdjust: 'none',
       MozTextSizeAdjust: 'none',
       textSizeAdjust: 'none',
     }),
-    [fixHeight],
+    [isMobileLayout],
   );
   const lastMessageAtom = useMemo(
     () =>
@@ -229,7 +229,8 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
       data-variant="normal"
       onSelectionChange={updateRange}
       style={style}
-      autoHeight={!fixHeight}
+      // 始终启用 autoHeight
+      autoHeight={true}
       rows={1}
       className="resize-none px-2 py-2 outline-none"
     >
