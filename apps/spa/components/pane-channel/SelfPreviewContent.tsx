@@ -20,6 +20,7 @@ export const SelfPreviewContent: FC<Props> = ({ nameNode, myMember, mediaNode })
   const deferredParsed = useDeferredValue(parsed);
   return (
     <div className="items-between pr-message-small @2xl:pr-message flex h-full min-h-8 flex-col gap-1">
+      {mediaNode}
       {parsed.whisperToUsernames != null && (
         <ContentWhisperTo
           inGame={inGame}
@@ -45,7 +46,6 @@ export const SelfPreviewContent: FC<Props> = ({ nameNode, myMember, mediaNode })
           />
         )}
       </div>
-      {mediaNode}
     </div>
   );
 };

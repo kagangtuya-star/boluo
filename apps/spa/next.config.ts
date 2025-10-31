@@ -76,6 +76,9 @@ const config: NextConfig = {
     config.resolve.alias['@formatjs/icu-messageformat-parser'] =
       '@formatjs/icu-messageformat-parser/no-parser';
 
+    // 添加这一段来修复 findDOMNode 问题
+    // config.resolve.alias['react-dom'] = path.resolve('./node_modules/react-dom');
+
     return config;
   },
 };

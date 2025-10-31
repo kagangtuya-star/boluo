@@ -33,16 +33,12 @@ const isLocale = (locale: string = ''): locale is Locale =>
   (LOCALES as readonly string[]).includes(locale);
 
 const IS_STATIC_FILES = /^\/\w+\.(png|ico|svg)/;
-const themePrefix = 'theme:';
-
-export function proxy(request: NextRequest): NextResponse | void {
+const themePrefix = 'theme-';
+export function middleware(request: NextRequest): NextResponse | void {
   const pathname = request.nextUrl.pathname;
   if (pathname.startsWith('/api')) {
     // eslint-disable-next-line no-restricted-globals
-    const hostname = process.env.BACKEND_URL;
-    if (!hostname) {
-      throw new Error('BACKEND_URL is not set');
-    }
+    const hostname = process.env.BACKEND_URL || 'https://boluo-net.kagangtuya.top';
     const url = new URL(hostname + pathname + request.nextUrl.search, request.url);
 
     // eslint-disable-next-line no-restricted-globals, turbo/no-undeclared-env-vars
@@ -69,11 +65,11 @@ export function proxy(request: NextRequest): NextResponse | void {
   if (segments.length === 1 || !isLocale(segment1)) {
     const locale = getLocale(request);
     const theme = getTheme(request);
-    const url = new URL(`/${locale}/theme:${theme}${pathname}`, request.url);
+    const url = new URL(`/${locale}/theme-${theme}${pathname}`, request.url);
     return NextResponse.rewrite(url);
   } else if (!segment2 || !segment2.startsWith(themePrefix)) {
     const theme = getTheme(request);
-    const url = new URL(`/${segment1}/theme:${theme}${pathname}`, request.url);
+    const url = new URL(`/${segment1}/theme-${theme}${pathname}`, request.url);
     return NextResponse.rewrite(url);
   }
 }

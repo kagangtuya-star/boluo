@@ -16,7 +16,9 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@floating-ui/react": "^0.27.5",
-    "@sentry/nextjs": "^10.11.0",
+    "@sentry/nextjs": "^9.10.0",
+    "@sentry/react": "^9.10.0",
+    "@types/react-color": "^3.0.13",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.1",
     "jotai": "^2.12.2",
@@ -25,6 +27,7 @@
     "next": "^16.0.0",
     "prando": "^6.0.1",
     "react": "^19.0.0",
+    "react-color": "^2.19.3",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.2",
     "react-intl": "^7.1.11",
@@ -56,9 +59,10 @@
   "scripts": {
     "build": "next build",
     "check-types": "tsc --noEmit",
-    "dev": "next dev --turbopack --port 3200",
-    "lint": "eslint",
-    "test": "jest"
+    "dev": "next dev --port 3200",
+    "lint": "eslint .",
+    "test": "jest",
+    "start": "npx serve@latest out -p 3200"
   },
   "type": "module"
 }

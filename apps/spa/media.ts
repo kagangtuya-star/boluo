@@ -3,7 +3,7 @@ import { post } from '@boluo/api-browser';
 import { Err, Ok, type Result } from '@boluo/utils/result';
 import { timeout } from '@boluo/utils/async';
 import { recordError, recordWarn } from './error';
-
+const DEFAULT_MEDIA_URL = 'https://media.boluo.chat';
 export const mediaMaxSizeMb = 8;
 export const mediaMaxSizeByte = mediaMaxSizeMb * 1024 * 1024;
 
@@ -18,9 +18,9 @@ export const makeMediaPublicUrl = (raw: unknown) => {
   if (typeof raw !== 'string') {
     throw new Error('The public media URL is not defined');
   }
-  let url = raw;
+  let url = raw as string;
   if (url.endsWith('/')) {
-    url = raw.slice(0, -1);
+    url = (raw as string).slice(0, -1);
   }
   try {
     new URL(url);

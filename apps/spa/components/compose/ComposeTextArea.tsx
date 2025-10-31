@@ -20,6 +20,9 @@ import { chatAtom } from '../../state/chat.atoms';
 import * as L from 'list';
 import screens from '@boluo/ui/screens.json';
 
+// 添加不可见空白字符作为占位符常量
+const PLACEHOLDER_CHAR = '‎'; // 这是一个零宽不换行空格字符
+
 interface Props {
   myId: string;
   parsed: ParseResult;
@@ -74,24 +77,26 @@ const MAX_FIND_LENGTH = 64;
 export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) => {
   const { composeAtom, parsedAtom, composeFocusedAtom, hideSelfPreviewTimeoutAtom } =
     useChannelAtoms();
-  const fixHeight = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
+  const isMobileLayout = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
   const setSelfPreviewLock = useSetAtom(hideSelfPreviewTimeoutAtom);
   const ref = useRef<RichTextareaHandle | null>(null);
   const channelId = useChannelId();
   const isCompositionRef = useRef(false);
   const dispatch = useSetAtom(composeAtom);
   const store = useStore();
+  // 添加一个 ref 来跟踪占位符状态
+  const placeholderAddedRef = useRef(false);
+
   const style = useMemo(
     (): React.CSSProperties => ({
       width: '100%',
-      height: fixHeight ? '12rem' : undefined,
-      maxHeight: fixHeight ? undefined : '10rem',
+      maxHeight: isMobileLayout ? '12rem' : '10rem', // -> 为移动端和桌面端都设置一个最大高度
       scrollbarWidth: 'none',
       WebkitTextSizeAdjust: 'none',
       MozTextSizeAdjust: 'none',
       textSizeAdjust: 'none',
     }),
-    [fixHeight],
+    [isMobileLayout],
   );
   const lastMessageAtom = useMemo(
     () =>
@@ -131,7 +136,17 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
   useReflectRangeChange(composeAtom, lock, ref);
 
   const handleChange: ChangeEventHandler<HTMLTextAreaElement> = (e) => {
-    const { value } = e.target;
+    let { value } = e.target;
+
+    // 如果当前内容只有占位符，且用户输入了其他内容，则清除占位符
+    if (placeholderAddedRef.current && value !== PLACEHOLDER_CHAR) {
+      // 如果内容是以占位符开头，则移除它
+      if (value.startsWith(PLACEHOLDER_CHAR)) {
+        value = value.substring(PLACEHOLDER_CHAR.length);
+      }
+      placeholderAddedRef.current = false;
+    }
+
     updateRange();
     dispatch({
       type: 'setSource',
@@ -145,6 +160,18 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
     e.preventDefault();
     const media = files[0]!;
     dispatch({ type: 'media', payload: { media } });
+  };
+
+  const handleFocus = () => {
+    dispatch(focusAction);
+
+    if (source === '') {
+      placeholderAddedRef.current = true;
+      dispatch({
+        type: 'setSource',
+        payload: { channelId, source: PLACEHOLDER_CHAR },
+      });
+    }
   };
 
   const handleKeyDown = async (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -192,7 +219,7 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
       ref={ref}
       value={source}
       onChange={handleChange}
-      onFocus={() => dispatch(focusAction)}
+      onFocus={handleFocus}
       onBlur={() => dispatch(blurAction)}
       onClick={() => setSelfPreviewLock(Date.now() + 1000 * 6)}
       onPasteCapture={handlePaste}
@@ -202,7 +229,8 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
       data-variant="normal"
       onSelectionChange={updateRange}
       style={style}
-      autoHeight={!fixHeight}
+      // 始终启用 autoHeight
+      autoHeight={true}
       rows={1}
       className="resize-none px-2 py-2 outline-none"
     >
