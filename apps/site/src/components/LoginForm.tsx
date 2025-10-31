@@ -1,7 +1,7 @@
 'use client';
 import type { ApiError } from '@boluo/api';
 import { post } from '@boluo/api-browser';
-import { useErrorExplain } from '@boluo/common/hooks';
+import { explainError } from '@boluo/locale/errors';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { FC, ReactNode } from 'react';
 import { useId } from 'react';
@@ -9,12 +9,12 @@ import { useState } from 'react';
 import { FieldError, SubmitHandler, useFormState } from 'react-hook-form';
 import { FormProvider, useFormContext } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
-import { FormattedMessage, useIntl } from 'react-intl';
+import { FormattedMessage, IntlShape, useIntl } from 'react-intl';
 import { useSWRConfig } from 'swr';
 import { Button } from '@boluo/ui/Button';
 import { ErrorMessageBox } from '@boluo/ui/ErrorMessageBox';
 import { TextInput } from '@boluo/ui/TextInput';
-import type { StyleProps } from '@boluo/utils';
+import { type StyleProps } from '@boluo/utils/types';
 import { required } from '@boluo/common/validations';
 
 // https://web.dev/sign-in-form-best-practices/
@@ -27,14 +27,13 @@ interface Inputs {
   password: string;
 }
 
-const FormErrorDisplay: FC<{ error: ApiError }> = ({ error }) => {
-  const explain = useErrorExplain();
+const FormErrorDisplay: FC<{ error: ApiError; intl: IntlShape }> = ({ error, intl }) => {
   let errorMessage: ReactNode;
 
   if (error.code === 'NO_PERMISSION') {
     errorMessage = <FormattedMessage defaultMessage="Username and password do not match" />;
   } else {
-    errorMessage = <span>{explain(error)}</span>;
+    errorMessage = <span>{explainError(intl, error)}</span>;
   }
   return <ErrorMessageBox>{errorMessage}</ErrorMessageBox>;
 };
@@ -105,6 +104,7 @@ const PasswordField = () => {
 };
 
 const FormContent: FC<{ error: ApiError | null }> = ({ error }) => {
+  const intl = useIntl();
   const { isDirty, isSubmitting } = useFormState();
   return (
     <div className="flex flex-col gap-2">
@@ -120,8 +120,8 @@ const FormContent: FC<{ error: ApiError | null }> = ({ error }) => {
       </div>
 
       {error && (
-        <div className="text-error-700 my-1">
-          <FormErrorDisplay error={error} />
+        <div className="text-state-danger-text my-1">
+          <FormErrorDisplay error={error} intl={intl} />
         </div>
       )}
 
@@ -149,6 +149,7 @@ export const LoginForm: FC<Props> = () => {
     }
     setError(null);
     if (typeof nextUrl === 'string' && nextUrl.trim() !== '') {
+      // eslint-disable-next-line react-hooks/immutability
       window.location.href = nextUrl;
     } else {
       void mutate(() => true, undefined, { revalidate: true });

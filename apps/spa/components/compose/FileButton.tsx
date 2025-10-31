@@ -4,7 +4,7 @@ import { type FC, useRef } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
 import { InComposeButton } from './InComposeButton';
-import { useTooltip } from '../../hooks/useTooltip';
+import { useTooltip } from '@boluo/common/hooks/useTooltip';
 import { TooltipBox } from '@boluo/ui/TooltipBox';
 
 interface Props {
@@ -40,11 +40,7 @@ export const FileButton: FC<Props> = () => {
     ? intl.formatMessage({ defaultMessage: 'Remove File' })
     : intl.formatMessage({ defaultMessage: 'Add File' });
   return (
-    <div
-      ref={refs.setReference}
-      {...getReferenceProps()}
-      className="relative flex-shrink-0 py-1 pl-1"
-    >
+    <div ref={refs.setReference} {...getReferenceProps()} className="relative shrink-0 py-1 pl-1">
       <InComposeButton onClick={handleClick} label={title}>
         {hasMedia ? <Trash /> : <Upload />}
       </InComposeButton>

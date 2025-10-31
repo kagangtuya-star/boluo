@@ -5,7 +5,7 @@ import { useIntl } from 'react-intl';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
 import { InComposeButton } from './InComposeButton';
 import { useDefaultInGame } from '../../hooks/useDefaultInGame';
-import { useTooltip } from '../../hooks/useTooltip';
+import { useTooltip } from '@boluo/common/hooks/useTooltip';
 import { TooltipBox } from '@boluo/ui/TooltipBox';
 
 export const InGameSwitchButton: FC = () => {
@@ -19,7 +19,7 @@ export const InGameSwitchButton: FC = () => {
   const dispatch = useSetAtom(composeAtom);
   const title = intl.formatMessage({ defaultMessage: 'Toggle In Game' });
   return (
-    <div className="flex-shrink-0 py-1" ref={refs.setReference} {...getReferenceProps()}>
+    <div className="shrink-0 py-1" ref={refs.setReference} {...getReferenceProps()}>
       <InComposeButton
         pressed={inGame}
         onClick={() =>
@@ -32,7 +32,7 @@ export const InGameSwitchButton: FC = () => {
         }
         label={title}
       >
-        <Mask className={inGame ? '' : 'text-text-lighter'} />
+        <Mask className={inGame ? '' : 'text-text-muted'} />
       </InComposeButton>
       <TooltipBox
         show={showTooltip}

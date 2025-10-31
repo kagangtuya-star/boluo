@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 use crate::channels::ChannelType;
 
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
 pub fn get_postgres_url() -> String {
     std::env::var("DATABASE_URL").expect("Failed to load Postgres connect URL")
 }
@@ -11,7 +13,7 @@ pub async fn get() -> sqlx::Pool<sqlx::Postgres> {
     const LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 5);
     const ACQUIRE_SLOW_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(800);
-    const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
+    const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     if let Some(pool) = POOL.get() {
         pool.clone()
     } else {
@@ -41,16 +43,45 @@ pub async fn get() -> sqlx::Pool<sqlx::Postgres> {
     }
 }
 
+pub async fn check_db_host() {
+    use std::str::FromStr;
+
+    let options = sqlx::postgres::PgConnectOptions::from_str(&get_postgres_url())
+        .expect("Cannot parse Postgres connect URL");
+
+    tracing::info!(
+        "Connecting to database at {}:{}",
+        options.get_host(),
+        options.get_port()
+    );
+
+    let host = options.get_host();
+    if host.starts_with('[') {
+        return;
+    }
+    if let Ok(_addr) = host.parse::<std::net::IpAddr>() {
+        return;
+    }
+
+    let resolved = tokio::net::lookup_host((options.get_host(), options.get_port()))
+        .await
+        .expect("Cannot resolve database host");
+
+    for addr in resolved {
+        tracing::info!("Resolved database address: {}", addr);
+    }
+}
+
 /// Runtime check if the database is available and can correctly deserialize data
 #[tracing::instrument]
-pub async fn check() {
+pub async fn check(pool: &sqlx::Pool<sqlx::Postgres>) {
     use crate::channels::{Channel, ChannelMember};
     use crate::media::models::Media;
     use crate::messages::Message;
     use crate::spaces::{Space, SpaceMember};
     use crate::users::{User, UserExt};
     use serde_json::json;
-    let pool = get().await;
+
     let real_user_id = {
         let mut conn = pool.acquire().await.expect("Cannot acquire connection");
 
@@ -183,5 +214,27 @@ pub async fn check() {
             .expect("Cannot generate reset token");
     } else {
         tracing::warn!("No real user id found, skipping session and reset token check");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[sqlx::test(migrator = "super::MIGRATOR")]
+    async fn db_test_check(pool: sqlx::PgPool) {
+        use crate::users::User;
+        let mut conn = pool.acquire().await.expect("Cannot acquire connection");
+
+        let user = sqlx::query_file_scalar!(
+            "sql/users/create.sql",
+            "madoka23432432432@law-of-cycles.com",
+            "madoka23432432432",
+            "Madoka",
+            "homura_love"
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .expect("Cannot create user");
+
+        assert_eq!(user.nickname, "Madoka");
     }
 }

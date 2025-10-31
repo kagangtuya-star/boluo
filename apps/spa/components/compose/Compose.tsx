@@ -81,13 +81,13 @@ export const Compose = ({ member, channelAtoms }: Props) => {
       <div
         onDrop={onDrop}
         onDragOver={handleDragOver}
-        className="bg-compose-outer-bg standalone-bottom-padding col-span-full border-t p-2"
+        className="bg-surface-muted standalone-bottom-padding border-border-subtle col-span-full border-t p-2"
       >
         {editMessageBanner}
         <div
           data-in-game={inGame}
           data-whisper={isWhisper}
-          className="bg-compose-bg focus-within:border-compose-focused-border data-[in-game=true]:bg-message-inGame-bg border-compose-border relative flex items-end gap-1 rounded border data-[whisper=true]:border-dashed"
+          className="bg-surface-raised focus-within:border-border-strong data-[in-game=true]:bg-message-inGame-bg border-border-default relative flex items-end gap-1 rounded border data-[whisper=true]:border-dashed"
         >
           {fileButton}
           {inGameSwitchButton}
@@ -104,7 +104,7 @@ export const Compose = ({ member, channelAtoms }: Props) => {
           {sendButton}
         </div>
         <div>{mediaLine}</div>
-        <div className="h-[env(keyboard-inset-height,_0px)] overflow-hidden">
+        <div className="h-[env(keyboard-inset-height,0px)] overflow-hidden">
           <div className="px-1 py-4">
             <FormattedMessage defaultMessage="If you see this text, please try to swipe down ↓ to display the content." />
           </div>

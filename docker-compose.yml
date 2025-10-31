@@ -1,14 +1,16 @@
 services:
   db:
-    image: postgres:17
+    image: postgres:18-trixie
+    build:
+      context: ./apps/db
+      dockerfile: Dockerfile
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: boluo
       TZ: UTC
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./apps/server/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - postgres_data:/var/lib/postgresql
   redis:
     image: redis
     volumes:

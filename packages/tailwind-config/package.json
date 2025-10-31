@@ -2,11 +2,14 @@
   "name": "@boluo/tailwind-config",
   "version": "0.0.0",
   "devDependencies": {
-    "@boluo/typescript-config": "*",
-    "tailwindcss": "^3.4.17"
+    "@boluo/typescript-config": "0.0.0",
+    "@tailwindcss/postcss": "^4.1.14",
+    "tailwindcss": "^4.1.14"
   },
   "exports": {
-    ".": "./tailwind.config.ts"
+    ".": "./tailwind.css",
+    "./postcss": "./postcss.config.js"
   },
-  "private": true
+  "private": true,
+  "type": "module"
 }

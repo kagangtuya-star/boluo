@@ -3,7 +3,7 @@ import { type FC } from 'react';
 import { SidebarHeaderButton } from '../sidebar/SidebarHeaderButton';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
 import { useAtomValue } from 'jotai';
-import { useTooltip } from '../../hooks/useTooltip';
+import { useTooltip } from '@boluo/common/hooks/useTooltip';
 import { FormattedMessage } from 'react-intl';
 import { TooltipBox } from '@boluo/ui/TooltipBox';
 
@@ -13,7 +13,7 @@ interface Props {
 }
 
 const Dot: FC = () => (
-  <div className="bg-dot-normal absolute -right-0.5 -top-0.5 h-[6px] w-[6px] rounded-full shadow-md" />
+  <div className="absolute -top-0.5 -right-0.5 h-[6px] w-[6px] rounded-full bg-blue-600 shadow-md" />
 );
 
 export const ChannelHeaderMoreButton: FC<Props> = ({ on, toggle }) => {

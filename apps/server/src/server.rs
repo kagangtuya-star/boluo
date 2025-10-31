@@ -28,6 +28,7 @@ mod utils;
 mod error;
 mod cache;
 mod channels;
+mod config;
 mod context;
 mod cors;
 mod csrf;
@@ -55,13 +56,17 @@ mod validators;
 mod websocket;
 
 use crate::cors::allow_origin;
+use crate::db::MIGRATOR;
 use crate::error::AppError;
 use crate::interface::{err_response, missing, ok_response};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError> {
+async fn router(
+    ctx: &context::AppContext,
+    req: Request<Incoming>,
+) -> Result<interface::Response, AppError> {
     let path = req.uri().path().to_string();
 
     if !path.starts_with("/api/") {
@@ -77,12 +82,12 @@ async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError>
         ($prefix: expr, $handler: expr) => {
             let prefix = $prefix;
             if let Some(stripped) = path.strip_prefix(prefix) {
-                return $handler(req, stripped).await;
+                return $handler(ctx, req, stripped).await;
             }
         };
     }
     if path == "/api/csrf-token" {
-        return csrf::get_csrf_token(req).await.map(ok_response);
+        return csrf::get_csrf_token(ctx, req).await.map(ok_response);
     }
     if path.starts_with("/api/tunnel") {
         return Ok(sentry_tunnel::handler(req).await);
@@ -98,6 +103,7 @@ async fn router(req: Request<Incoming>) -> Result<interface::Response, AppError>
 }
 
 async fn handler(
+    ctx: &context::AppContext,
     req: Request<Incoming>,
 ) -> Result<hyper::Response<Full<hyper::body::Bytes>>, hyper::Error> {
     use tracing::Instrument as _;
@@ -146,7 +152,7 @@ async fn handler(
 
     // Route the request
     async {
-        let response = router(req).await;
+        let response = router(ctx, req).await;
         let duration = start.elapsed();
         let span = tracing::Span::current();
 
@@ -216,8 +222,7 @@ struct Args {
 #[tokio::main(worker_threads = 5)]
 async fn main() {
     use tracing_subscriber::filter::{EnvFilter, LevelFilter};
-    dotenvy::from_filename(".env.local").ok();
-    dotenvy::dotenv().ok();
+    config::load();
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
         .from_env_lossy();
@@ -248,9 +253,21 @@ async fn main() {
 
     tracing::info!("Server listening on: {}", socket);
 
-    db::check().await;
+    db::check_db_host().await;
+
+    let pool = {
+        // Database Migrations
+        let pool = db::get().await;
+        MIGRATOR
+            .run(&pool)
+            .await
+            .expect("Failed to run database migrations");
+        pool
+    };
+    db::check(&pool).await;
     tracing::info!("Database is ready");
-    redis::check().await;
+    let mut redis_conn = redis::conn().await;
+    redis::check(redis_conn.as_mut()).await;
     tracing::info!("Redis is ready");
 
     if context::SITE_URL.is_none() {
@@ -263,11 +280,15 @@ async fn main() {
         tracing::error!("PUBLIC_MEDIA_URL is not set");
     }
 
-    server_metrics::init_metrics().await;
+    server_metrics::init_metrics(&pool).await;
 
     if args.check {
         return;
     }
+
+    // Initialize AppContext
+    let ctx = std::sync::Arc::new(context::AppContext::new(pool.clone(), redis_conn));
+    tracing::info!("AppContext initialized");
 
     if let Ok(exporter_listen) = std::env::var("PROMETHEUS_EXPORTER") {
         let addr = exporter_listen
@@ -290,7 +311,7 @@ async fn main() {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to create signal stream");
 
-    server_metrics::start_update_metrics();
+    server_metrics::start_update_metrics(pool.clone());
     tracing::info!("Startup ID: {}", events::startup_id());
 
     let timeout_counter = metrics::counter!("boluo_server_tcp_connections_timeout_total");
@@ -299,7 +320,7 @@ async fn main() {
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
-                handle_connection(accept_result, timeout_counter.clone(), error_counter.clone()).await;
+                handle_connection(ctx.clone(), accept_result, timeout_counter.clone(), error_counter.clone()).await;
             },
             _ = terminate_stream.recv() => {
                 tracing::info!("Graceful shutdown signal received");
@@ -313,6 +334,7 @@ async fn main() {
 }
 
 async fn handle_connection(
+    ctx: std::sync::Arc<context::AppContext>,
     accept_result: Result<(tokio::net::TcpStream, SocketAddr), std::io::Error>,
     timeout_counter: metrics::Counter,
     error_counter: metrics::Counter,
@@ -336,10 +358,11 @@ async fn handle_connection(
 
                 let handler_with_reset = move |req: Request<Incoming>| {
                     let tx = timeout_reset_tx.clone();
+                    let ctx = ctx.clone();
                     async move {
                         // Reset timeout on each request
                         let _ = tx.send(std::time::Instant::now());
-                        handler(req).await
+                        handler(&ctx, req).await
                     }
                 };
 
