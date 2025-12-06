@@ -14,11 +14,12 @@ import { type ComposeActionUnion } from '../../state/compose.actions';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
 import { RichTextarea, type RichTextareaHandle } from 'rich-textarea';
 import { composeRender } from './render';
-import { type ParseResult } from '../../interpreter/parse-result';
+import { type ParseResult } from '@boluo/interpreter';
 import { type ComposeAtom } from '../../hooks/useComposeAtom';
 import { chatAtom } from '../../state/chat.atoms';
 import * as L from 'list';
 import screens from '@boluo/ui/screens.json';
+import { useDefaultInGame } from '../../hooks/useDefaultInGame';
 
 // 添加不可见空白字符作为占位符常量
 const PLACEHOLDER_CHAR = '‎'; // 这是一个零宽不换行空格字符
@@ -75,10 +76,9 @@ const useReflectRangeChange = (
 const MAX_FIND_LENGTH = 64;
 
 export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) => {
-  const { composeAtom, parsedAtom, composeFocusedAtom, hideSelfPreviewTimeoutAtom } =
-    useChannelAtoms();
-  const isMobileLayout = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
-  const setSelfPreviewLock = useSetAtom(hideSelfPreviewTimeoutAtom);
+  const { composeAtom, parsedAtom, composeFocusedAtom } = useChannelAtoms();
+  const defaultInGame = useDefaultInGame();
+  const fixHeight = useAtomValue(composeFocusedAtom) && window.innerWidth < screens.md;
   const ref = useRef<RichTextareaHandle | null>(null);
   const channelId = useChannelId();
   const isCompositionRef = useRef(false);
@@ -162,16 +162,14 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
     dispatch({ type: 'media', payload: { media } });
   };
 
-  const handleFocus = () => {
-    dispatch(focusAction);
+  const handleCompositionStart = () => {
+    isCompositionRef.current = true;
+    dispatch({ type: 'compositionStart', payload: {} });
+  };
 
-    if (source === '') {
-      placeholderAddedRef.current = true;
-      dispatch({
-        type: 'setSource',
-        payload: { channelId, source: PLACEHOLDER_CHAR },
-      });
-    }
+  const handleCompositionEnd = () => {
+    isCompositionRef.current = false;
+    dispatch({ type: 'compositionEnd', payload: {} });
   };
 
   const handleKeyDown = async (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -179,8 +177,12 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
       return;
     }
     const compose = store.get(composeAtom);
-    if (e.code === 'Escape' && compose.edit != null) {
-      dispatch({ type: 'reset', payload: {} });
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      dispatch({
+        type: 'toggleInGame',
+        payload: { defaultInGame },
+      });
       return;
     }
     if (e.code === 'ArrowUp' && compose.edit == null) {
@@ -221,10 +223,9 @@ export const ComposeTextArea: FC<Props> = ({ parsed, enterSend, send, myId }) =>
       onChange={handleChange}
       onFocus={handleFocus}
       onBlur={() => dispatch(blurAction)}
-      onClick={() => setSelfPreviewLock(Date.now() + 1000 * 6)}
       onPasteCapture={handlePaste}
-      onCompositionStart={() => (isCompositionRef.current = true)}
-      onCompositionEnd={() => (isCompositionRef.current = false)}
+      onCompositionStart={handleCompositionStart}
+      onCompositionEnd={handleCompositionEnd}
       onKeyDown={handleKeyDown}
       data-variant="normal"
       onSelectionChange={updateRange}

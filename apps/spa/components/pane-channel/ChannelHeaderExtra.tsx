@@ -1,7 +1,8 @@
 import { type PrimitiveAtom, useAtom } from 'jotai';
-import { type FC } from 'react';
+import { Activity, type FC } from 'react';
 import { type ChannelHeaderState } from './ChannelHeader';
 import { ChannelHeaderMore } from './ChannelHeaderMore';
+import { ChannelHeaderTopic } from './ChannelHeaderTopic';
 
 interface Props {
   channelId: string;
@@ -10,10 +11,15 @@ interface Props {
 
 export const ChannelHeaderExtra: FC<Props> = ({ stateAtom, channelId }) => {
   const [headerState, setHeaderState] = useAtom(stateAtom);
-  switch (headerState) {
-    case 'MORE':
-      return <ChannelHeaderMore channelId={channelId} setHeaderState={setHeaderState} />;
-    default:
-      return null;
-  }
+  const dismiss = () => setHeaderState('DEFAULT');
+  return (
+    <>
+      <Activity mode={headerState === 'MORE' ? 'visible' : 'hidden'}>
+        <ChannelHeaderMore channelId={channelId} setHeaderState={setHeaderState} />
+      </Activity>
+      <Activity mode={headerState === 'TOPIC' ? 'visible' : 'hidden'}>
+        <ChannelHeaderTopic channelId={channelId} dismiss={dismiss} />
+      </Activity>
+    </>
+  );
 };

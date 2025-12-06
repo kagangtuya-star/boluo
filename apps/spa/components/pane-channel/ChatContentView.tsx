@@ -13,19 +13,22 @@ import { useSetBanner } from '../../hooks/useBanner';
 import { useChannelId } from '../../hooks/useChannelId';
 import { isDummySelfPreview, useChatList } from '../../hooks/useChatList';
 import { ScrollerRefContext } from '../../hooks/useScrollerRef';
+import { VirtuosoRefContext } from '../../hooks/useVirtuosoRef';
 import { type ChatItem, type MessageItem } from '../../state/channel.types';
 import { chatAtom } from '../../state/chat.atoms';
 import { ChatListDndContext } from './ChatContentDndContext';
 import { ChatContentVirtualList } from './ChatContentVirtualList';
-import { GoButtomButton } from './GoBottomButton';
+import { GoBottomButton } from './GoBottomButton';
 import { channelReadFamily } from '../../state/unread.atoms';
 import { ReadObserverContext } from '../../hooks/useReadObserve';
 import { useMember } from '../../hooks/useMember';
 import { recordWarn } from '../../error';
 import { timeout } from '@boluo/utils/async';
+import { useScrollToMessage } from '../../hooks/useScrollToMessage';
 
 interface Props {
   setIsScrolling: (isScrolling: boolean) => void;
+  currentUserId?: string | undefined | null;
 }
 
 const SHOW_BOTTOM_BUTTON_TIMEOUT = 2000;
@@ -56,6 +59,7 @@ const useScrollToBottom = (virtuosoRef: RefObject<VirtuosoHandle | null>): UseSc
     const virtuoso = virtuosoRef.current;
     if (!virtuoso) return;
     virtuoso.scrollToIndex({ index: 'LAST' });
+    setShowButton(false);
   }, [virtuosoRef]);
   return { showButton, onBottomStateChange, goBottom };
 };
@@ -104,31 +108,40 @@ const useDndHandles = (channelId: string, chatList: ChatItem[]): UseDragHandlesR
       const messagesCount = chatList.length;
       if (active == null) return;
       resetDragging();
-      if (messagesCount < 2 || !event.over) {
-        return;
-      }
+      if (messagesCount < 2) return;
+      if (!event.over) return;
       const overData = event.over.data as DataRef<SortableData>;
       if (!overData.current) return;
       const { sortable } = overData.current;
-      const { realIndex, message: draggingMessage } = active;
+      const { message: draggingMessage } = active;
       const targetIndex = Math.min(messagesCount - 1, sortable.index);
-      if (realIndex === targetIndex) return;
-      resetDragging();
+      const sourceIndex = chatList.findIndex(
+        (chatItem) => chatItem.type === 'MESSAGE' && chatItem.id === draggingMessage.id,
+      );
+      if (sourceIndex === -1) {
+        setBanner({
+          level: 'WARNING',
+          content: (
+            <FormattedMessage defaultMessage="The message you are trying to move is no longer available." />
+          ),
+        });
+        return;
+      }
+      if (sourceIndex === targetIndex) return;
       const targetItem = chatList[targetIndex];
       if (!targetItem) {
         setBanner({
           level: 'WARNING',
           content: (
-            <FormattedMessage defaultMessage="Failed to move the message, the target is lost. Please try again." />
+            <FormattedMessage defaultMessage="The position you are trying to place the message is changed." />
           ),
         });
-        recordWarn('Lost the target item when drag end', { realIndex, targetIndex, messagesCount });
         return;
       }
-      const timestamp = new Date().getTime();
+      const timestamp = Date.now();
       const item: MessageItem = { ...draggingMessage, optimistic: true };
       let range: [[number, number] | null, [number, number] | null] | null = null;
-      if (realIndex < targetIndex) {
+      if (sourceIndex < targetIndex) {
         range = [[targetItem.posP, targetItem.posQ], null];
         const targetNext = chatList[targetIndex + 1];
         if (!targetNext) {
@@ -233,7 +246,7 @@ const useScrollLock = (
   return scrollLockRef;
 };
 
-export const ChatContentView: FC<Props> = ({ setIsScrolling }) => {
+export const ChatContentView: FC<Props> = ({ setIsScrolling, currentUserId }) => {
   const channelId = useChannelId();
   const store = useStore();
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
@@ -249,6 +262,12 @@ export const ChatContentView: FC<Props> = ({ setIsScrolling }) => {
     channelId,
     myId,
   );
+
+  useScrollToMessage({
+    channelId,
+    virtuosoRef,
+    chatList,
+  });
 
   const { handleDragStart, handleDragEnd, active, handleDragCancel } = useDndHandles(
     channelId,
@@ -337,32 +356,35 @@ export const ChatContentView: FC<Props> = ({ setIsScrolling }) => {
   });
 
   return (
-    <div className="@container relative" ref={wrapperRef}>
-      <ScrollerRefContext value={scrollerRef}>
-        <ReadObserverContext value={readObserve}>
-          <ChatListDndContext
-            active={active}
-            onDragCancel={handleDragCancel}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={chatList} strategy={verticalListSortingStrategy}>
-              <ChatContentVirtualList
-                firstItemIndex={firstItemIndex}
-                setIsScrolling={setIsScrolling}
-                renderRangeRef={renderRangeRef}
-                filteredMessagesCount={filteredMessagesCount}
-                virtuosoRef={virtuosoRef}
-                scrollerRef={scrollerRef}
-                chatList={chatList}
-              />
-              {showButton && (
-                <GoButtomButton channelId={channelId} chatList={chatList} onClick={goBottom} />
-              )}
-            </SortableContext>
-          </ChatListDndContext>
-        </ReadObserverContext>
-      </ScrollerRefContext>
+    <div className="ChatContentView @container relative" ref={wrapperRef}>
+      <VirtuosoRefContext value={virtuosoRef}>
+        <ScrollerRefContext value={scrollerRef}>
+          <ReadObserverContext value={readObserve}>
+            <ChatListDndContext
+              active={active}
+              onDragCancel={handleDragCancel}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={chatList} strategy={verticalListSortingStrategy}>
+                <ChatContentVirtualList
+                  firstItemIndex={firstItemIndex}
+                  setIsScrolling={setIsScrolling}
+                  renderRangeRef={renderRangeRef}
+                  filteredMessagesCount={filteredMessagesCount}
+                  virtuosoRef={virtuosoRef}
+                  scrollerRef={scrollerRef}
+                  chatList={chatList}
+                  currentUserId={currentUserId}
+                />
+                {showButton && (
+                  <GoBottomButton channelId={channelId} chatList={chatList} onClick={goBottom} />
+                )}
+              </SortableContext>
+            </ChatListDndContext>
+          </ReadObserverContext>
+        </ScrollerRefContext>
+      </VirtuosoRefContext>
     </div>
   );
 };

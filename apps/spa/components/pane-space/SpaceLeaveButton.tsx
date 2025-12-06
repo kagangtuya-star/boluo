@@ -1,4 +1,11 @@
-import { autoUpdate, useClick, useDismiss, useFloating, useInteractions } from '@floating-ui/react';
+import {
+  autoUpdate,
+  FloatingPortal,
+  useClick,
+  useDismiss,
+  useFloating,
+  useInteractions,
+} from '@floating-ui/react';
 import { type ApiError, type Space, type SpaceMemberWithUser } from '@boluo/api';
 import { post } from '@boluo/api-browser';
 import { UserPlus, UserX } from '@boluo/icons';
@@ -8,7 +15,7 @@ import useSWRMutation from 'swr/mutation';
 import { Button } from '@boluo/ui/Button';
 import { unwrap } from '@boluo/utils/result';
 import { FloatingBox } from '@boluo/ui/FloatingBox';
-import { SidebarHeaderButton } from '../sidebar/SidebarHeaderButton';
+import { PaneHeaderButton } from '@boluo/ui/PaneHeaderButton';
 import { useSWRConfig } from 'swr';
 
 interface Props {
@@ -30,9 +37,8 @@ export const SpaceLeaveButton: FC<Props> = ({ space, mySpaceMember }) => {
       },
     },
   );
-  const { x, y, strategy, refs, context } = useFloating({
+  const { refs, context, floatingStyles } = useFloating({
     open: isConfirmOpen,
-    strategy: 'fixed',
     placement: 'bottom-end',
     onOpenChange: setComfirmOpen,
     whileElementsMounted: autoUpdate,
@@ -46,7 +52,7 @@ export const SpaceLeaveButton: FC<Props> = ({ space, mySpaceMember }) => {
   const { getReferenceProps, getFloatingProps } = useInteractions([click, dismiss]);
   return (
     <>
-      <SidebarHeaderButton
+      <PaneHeaderButton
         icon={mySpaceMember == null ? <UserPlus /> : <UserX />}
         isLoading={isLeaving}
         ref={refs.setReference}
@@ -59,26 +65,28 @@ export const SpaceLeaveButton: FC<Props> = ({ space, mySpaceMember }) => {
             <FormattedMessage defaultMessage="Leave Space" />
           )}
         </span>
-      </SidebarHeaderButton>
+      </PaneHeaderButton>
       {isConfirmOpen && (
-        <div
-          style={{ position: strategy, top: y ?? 0, left: x ?? 0 }}
-          ref={refs.setFloating}
-          {...getFloatingProps()}
-          className="z-20 w-48"
-        >
-          <FloatingBox>
-            <FormattedMessage
-              defaultMessage='Are you sure to leave the "{spaceName}" space?'
-              values={{ spaceName: space.name }}
-            />
-            <div className="pt-2 text-right">
-              <Button variant="danger" type="button" onClick={() => leave()} disabled={isLeaving}>
-                <FormattedMessage defaultMessage="Leave" />
-              </Button>
-            </div>
-          </FloatingBox>
-        </div>
+        <FloatingPortal>
+          <div
+            style={floatingStyles}
+            ref={refs.setFloating}
+            {...getFloatingProps()}
+            className="w-54"
+          >
+            <FloatingBox className="p-3">
+              <FormattedMessage
+                defaultMessage='Are you sure to leave the "{spaceName}" space?'
+                values={{ spaceName: space.name }}
+              />
+              <div className="pt-2 text-right">
+                <Button variant="danger" type="button" onClick={() => leave()} disabled={isLeaving}>
+                  <FormattedMessage defaultMessage="Leave" />
+                </Button>
+              </div>
+            </FloatingBox>
+          </div>
+        </FloatingPortal>
       )}
     </>
   );

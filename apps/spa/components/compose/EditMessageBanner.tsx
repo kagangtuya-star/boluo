@@ -7,7 +7,7 @@ import { useChannelId } from '../../hooks/useChannelId';
 import { type Message, type User } from '@boluo/api';
 import { FormattedMessage, useIntl } from 'react-intl';
 import { Content } from '../pane-channel/Content';
-import { messageToParsed } from '../../interpreter/to-parsed';
+import { messageToParsed } from '@boluo/interpreter';
 import { Name } from '../pane-channel/Name';
 import { InComposeButton } from './InComposeButton';
 import { Edit, X } from '@boluo/icons';
@@ -64,7 +64,7 @@ export const EditMessageBanner = ({ currentUser }: Props) => {
         name={message.name}
         isMaster={message.isMaster ?? false}
         self={currentUser.id === message.senderId}
-        user={null}
+        userId={message.senderId}
       />
     );
   }, [message, currentUser]);
@@ -87,7 +87,7 @@ export const EditMessageBanner = ({ currentUser }: Props) => {
   } else {
     content = (
       <div className="relative flex items-center gap-2">
-        <div className="text-text-secondary w-18 flex-initial text-sm">
+        <div className="text-text-secondary w-18 flex-none text-sm">
           <Icon className="mr-1" icon={Edit} />
           <span>
             <FormattedMessage defaultMessage="Editing" />
@@ -95,7 +95,7 @@ export const EditMessageBanner = ({ currentUser }: Props) => {
         </div>
         <div className="grow">
           <div className="text-text-secondary text-xs"></div>
-          <div className="text-text-secondary max-h-12 overflow-y-auto text-sm">
+          <div className="text-text-secondary max-h-6 overflow-hidden text-sm">
             <Content
               source={message.text}
               entities={parsed.entities}
@@ -113,5 +113,5 @@ export const EditMessageBanner = ({ currentUser }: Props) => {
       </div>
     );
   }
-  return <div className="border-transprent border px-1 pb-1">{content}</div>;
+  return <div className="border border-transparent pb-1 pl-1">{content}</div>;
 };

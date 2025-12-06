@@ -1,9 +1,10 @@
 import type { useSortable } from '@dnd-kit/sortable';
 import clsx from 'clsx';
 import { MoveVertical, TriangleAlert } from '@boluo/icons';
-import { FC, type ReactNode } from 'react';
+import { FC, useEffect, useMemo, type ReactNode } from 'react';
 import { Spinner } from '@boluo/ui/Spinner';
-import { Delay } from '../Delay';
+import { MessageHandleBox } from '@boluo/ui/chat/MessageHandleBox';
+import { Delay } from '@boluo/ui/Delay';
 import { type FailTo } from '../../state/channel.types';
 import { useIsOptimistic } from '../../hooks/useIsOptimistic';
 import { ChatItemMessageFail } from './ChatItemMessageFail';
@@ -32,16 +33,17 @@ export const MessageReorderHandle: FC<Props> = ({
     listeners = undefined;
     attributes = undefined;
   }
-  let icon: ReactNode = null;
-  if (failTo) {
-    icon = <ChatItemMessageFail failTo={failTo} />;
-  } else if (loading) {
-    icon = <Spinner className="inline text-xs" />;
-  } else if (draggable) {
-    icon = <MoveVertical className="inline text-xs" />;
-  }
+  const icon: ReactNode = useMemo(() => {
+    if (failTo) {
+      return <ChatItemMessageFail failTo={failTo} />;
+    } else if (loading) {
+      return <Spinner className="inline text-xs" />;
+    } else if (draggable) {
+      return <MoveVertical className="inline text-xs" />;
+    }
+  }, [failTo, loading, draggable]);
   return (
-    <div className="col-span-1 row-span-full h-full">
+    <MessageHandleBox>
       <div
         ref={ref}
         {...listeners}
@@ -53,10 +55,10 @@ export const MessageReorderHandle: FC<Props> = ({
           loading && 'cursor-wait',
         )}
       >
-        <Delay>
+        <Delay fallback={null}>
           <div>{icon}</div>
         </Delay>
       </div>
-    </div>
+    </MessageHandleBox>
   );
 };

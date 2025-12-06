@@ -162,6 +162,28 @@ impl Message {
         Ok(messages)
     }
 
+    pub async fn get_after_pos<'c, T: sqlx::PgExecutor<'c>>(
+        db: T,
+        channel_id: &Uuid,
+        after: Option<f64>,
+        limit: i64,
+        current_user_id: Option<&Uuid>,
+    ) -> Result<Vec<Message>, ModelError> {
+        use futures::TryStreamExt as _;
+        if !(1..=256).contains(&limit) {
+            return Err(ValidationFailed("illegal limit range").into());
+        }
+        let mut stream =
+            sqlx::query_file_scalar!("sql/messages/get_after_pos.sql", channel_id, after, limit)
+                .fetch(db);
+        let mut messages = Vec::new();
+        while let Some(mut message) = stream.try_next().await? {
+            message.hide(current_user_id);
+            messages.push(message);
+        }
+        Ok(messages)
+    }
+
     pub async fn export<'c, T: sqlx::PgExecutor<'c>>(
         db: T,
         channel_id: &Uuid,
@@ -465,6 +487,11 @@ impl Message {
                 .await;
             Ok(Some(message_in_pos))
         } else {
+            // Capture current Postgres transaction id to correlate conflicts across logs.
+            let txid_current = sqlx::query_scalar::<sqlx::Postgres, i64>("select txid_current()")
+                .fetch_one(&mut *db)
+                .await
+                .ok();
             crate::pos::CHANNEL_POS_MANAGER
                 .cancel(channel_id, *id)
                 .await;
@@ -479,7 +506,19 @@ impl Message {
                 )
                 .await;
             tracing::warn!(
-                "Conflict occurred while moving message {id} in channel {channel_id}, same position as {message_in_pos_id}"
+                conflict_txid = txid_current,
+                attempted_pos_p = pos.0,
+                attempted_pos_q = pos.1,
+                lower_bound_pos_p = a.0,
+                lower_bound_pos_q = a.1,
+                upper_bound_pos_p = b.0,
+                upper_bound_pos_q = b.1,
+                conflicting_pos_p = message_in_pos.pos_p,
+                conflicting_pos_q = message_in_pos.pos_q,
+                conflicting_message_id = %message_in_pos_id,
+                attempted_message_id = %id,
+                channel_id = %channel_id,
+                "Conflict occurred while moving message; falling back to move_bottom"
             );
             let moved_message = Message::move_bottom(
                 db,

@@ -1,7 +1,7 @@
 import { useAtomValue, useStore } from 'jotai';
 import { selectAtom } from 'jotai/utils';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { binarySearchPos } from '../sort';
+import { useEffect, useMemo, useRef } from 'react';
+import { binarySearchPos } from '@boluo/sort';
 import { findMessage, type OptimisticItem, type ChannelState } from '../state/channel.reducer';
 import { type ChatItem, type PreviewItem } from '../state/channel.types';
 import { chatAtom } from '../state/chat.atoms';
@@ -36,7 +36,6 @@ const selectComposeSlice = (
       prevPreviewId = prevSlice.prevPreviewId;
     }
   }
-
   return { previewId, edit, prevPreviewId };
 };
 
@@ -86,53 +85,6 @@ const makeDummyPreview = (
 });
 
 const SAFE_OFFSET = 2;
-const HIDE_DUMMY_DELAY = 8000;
-
-export const useShowDummy = (
-  store: ReturnType<typeof useStore>,
-  composeAtom: ChannelAtoms['composeAtom'],
-  hideSelfPreviewTimeoutAtom: ChannelAtoms['hideSelfPreviewTimeoutAtom'],
-): boolean => {
-  const hideDummyTimeout = useRef<number>(0);
-  const [showDummy, setShowDummy] = useState(false);
-  useEffect(() => {
-    let handle: number | undefined;
-    const updateTimeout = () => {
-      const now = Date.now();
-      const timeout = hideDummyTimeout.current;
-      if (now < timeout) {
-        setShowDummy(true);
-        clearTimeout(handle);
-        handle = window.setTimeout(() => {
-          setShowDummy(false);
-        }, timeout - now);
-      } else {
-        setShowDummy(false);
-      }
-    };
-    const unsubRecordModified = store.sub(composeAtom, () => {
-      const focused = store.get(composeAtom).focused;
-      if (focused) {
-        hideDummyTimeout.current = Math.max(
-          Date.now() + HIDE_DUMMY_DELAY,
-          hideDummyTimeout.current,
-        );
-        updateTimeout();
-      }
-    });
-    const unsubListenTimeout = store.sub(hideSelfPreviewTimeoutAtom, () => {
-      const selfPreviewLock = store.get(hideSelfPreviewTimeoutAtom);
-      hideDummyTimeout.current = Math.max(hideDummyTimeout.current, selfPreviewLock);
-      updateTimeout();
-    });
-    return () => {
-      unsubListenTimeout();
-      unsubRecordModified();
-      clearTimeout(handle);
-    };
-  }, [composeAtom, hideSelfPreviewTimeoutAtom, store]);
-  return showDummy;
-};
 
 const useFilters = (
   filterAtom: ChannelAtoms['filterAtom'],
@@ -182,7 +134,7 @@ function channelSliceEq(a: ChannelSlice, b: ChannelSlice) {
 
 export const useChatList = (channelId: string, myId?: string): UseChatListReturn => {
   const store = useStore();
-  const { composeAtom, filterAtom, showArchivedAtom, parsedAtom, hideSelfPreviewTimeoutAtom } =
+  const { composeAtom, filterAtom, showArchivedAtom, parsedAtom, selfPreviewVisibleAtom } =
     useChannelAtoms();
 
   const { filterType, showArchived, isFiltersChanged } = useFilters(filterAtom, showArchivedAtom);
@@ -193,10 +145,15 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
     [composeAtom],
   );
   const composeSlice = useAtomValue(composeSliceAtom);
-  const showDummy = useShowDummy(store, composeAtom, hideSelfPreviewTimeoutAtom);
-
-  // Intentionally quit reactivity
-  const isEmpty = store.get(parsedAtom).entities.length === 0;
+  const isWhisper = useAtomValue(
+    useMemo(
+      () => selectAtom(parsedAtom, ({ whisperToUsernames }) => whisperToUsernames != null),
+      [parsedAtom],
+    ),
+  );
+  const isEmpty = useAtomValue(
+    useMemo(() => selectAtom(parsedAtom, ({ entities }) => entities.length === 0), [parsedAtom]),
+  );
 
   const channelSliceAtom = useMemo(
     () =>
@@ -227,6 +184,7 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
   const { fullLoaded, messages, previewMap, scheduledGcLowerPos, optimisticMessageMap } =
     useAtomValue(channelSliceAtom);
   const firstItemIndex = useRef(START_INDEX); // can't be negative
+  const selfPreviewVisible = useAtomValue(selfPreviewVisibleAtom);
   const { chatList, filteredMessagesCount } = useMemo((): Pick<
     UseChatListReturn,
     'chatList' | 'filteredMessagesCount'
@@ -240,11 +198,15 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
         optimisticMessageItems.push(optimistic.item);
       }
     }
+    let filteredMessagesCount = 0;
     const itemList: ChatItem[] = L.toArray(
       L.filter((item) => {
-        const isFiltered = !filter(filterType, item);
-        if (item.type === 'MESSAGE' && item.folded && !showArchived) return false;
-        if (isFiltered) {
+        if (item.type === 'MESSAGE' && item.folded && !showArchived) {
+          filteredMessagesCount++;
+          return false;
+        }
+        if (!filter(filterType, item)) {
+          filteredMessagesCount++;
           return false;
         }
         const optimisticItem = optimisticMessageMap[item.id]?.item;
@@ -266,7 +228,6 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
       }, messages),
     );
     const itemListLen = itemList.length;
-    const filteredMessagesCount = messages.length - itemListLen;
     const minPos = itemListLen > 0 ? itemList[0]!.pos : Number.MIN_SAFE_INTEGER;
     if (myId) {
       const existsPreviewIndex = optimisticPreviewList.findIndex(
@@ -276,6 +237,10 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
       if (hasSelfPreview) {
         const existsPreview = optimisticPreviewList[existsPreviewIndex]!;
         if (existsPreview.id !== composeSlice.previewId || isEmpty) {
+          optimisticPreviewList.splice(existsPreviewIndex, 1);
+          hasSelfPreview = false;
+        }
+        if (!selfPreviewVisible) {
           optimisticPreviewList.splice(existsPreviewIndex, 1);
           hasSelfPreview = false;
         }
@@ -308,7 +273,7 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
             posQ = message.posQ;
           }
         }
-        if (composeSlice.edit != null || showDummy) {
+        if (selfPreviewVisible) {
           optimisticPreviewList.push(
             makeDummyPreview(
               composeSlice.previewId,
@@ -325,6 +290,9 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
       }
     }
     for (const preview of optimisticPreviewList) {
+      if (preview.senderId === myId && !selfPreviewVisible) {
+        continue;
+      }
       const isFiltered = !filter(filterType, preview);
       if (isFiltered) continue;
       else if (preview.senderId === myId) {
@@ -392,8 +360,8 @@ export const useChatList = (channelId: string, myId?: string): UseChatListReturn
     myId,
     optimisticMessageMap,
     previewMap,
+    selfPreviewVisible,
     showArchived,
-    showDummy,
   ]);
 
   // Show a warning when the user tries to leave the page

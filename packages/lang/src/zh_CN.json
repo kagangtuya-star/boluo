@@ -14,26 +14,23 @@
   "+a+2ug": {
     "message": "成员"
   },
+  "+tsDQE": {
+    "message": "搜索关键词"
+  },
   "/+v5jy": {
     "message": "{seconds} 秒前"
   },
   "/DfISw": {
     "message": "取消编辑"
   },
-  "/FW+vJ": {
-    "message": "你可以在{githubUrl}查看源代码。"
-  },
   "/I//hN": {
     "message": "载入消息失败 ({errorCode})"
   },
-  "/caJLq": {
-    "message": "在新窗格中打开"
-  },
   "/iUStU": {
-    "message": "例如: 哪吒"
+    "message": "例如: 耐门·休·柯曼"
   },
-  "01eQoz": {
-    "message": "更换线路"
+  "/jxJyw": {
+    "message": "试图放置消息的位置发生了变化。"
   },
   "0Azlrb": {
     "message": "管理"
@@ -62,8 +59,8 @@
   "1iEPTM": {
     "message": "通用"
   },
-  "2J8G6R": {
-    "message": "文件大小不能超过 {sizeLimit}M"
+  "2mSiu0": {
+    "message": "草稿记录 ({count})"
   },
   "2pzTGC": {
     "message": "大成功"
@@ -77,6 +74,12 @@
   "39AHJm": {
     "message": "注册"
   },
+  "3ImDYr": {
+    "message": "包括已归档"
+  },
+  "3VG8rb": {
+    "message": "发生未知错误"
+  },
   "3VI9mt": {
     "message": "保存更改"
   },
@@ -85,6 +88,12 @@
   },
   "3cc4Ct": {
     "message": "亮色"
+  },
+  "3dRjlT": {
+    "message": "这里是新版本的菠萝，仍在活跃开发中。如果你更想回到旧版，请访问"
+  },
+  "3kOdlB": {
+    "message": "未设定话题"
   },
   "47FYwb": {
     "message": "取消"
@@ -113,8 +122,14 @@
   "5jeq8P": {
     "message": "未知"
   },
+  "5lqSZ6": {
+    "message": "正在移动的消息不再存在。"
+  },
   "5sg7KC": {
     "message": "密码"
+  },
+  "5zHF5n": {
+    "message": "打开新窗格"
   },
   "60KMrS": {
     "message": "设作默认"
@@ -137,14 +152,14 @@
   "6PgVSe": {
     "message": "重新生成"
   },
-  "6QRlW8": {
-    "message": "正在等待重新连接 ({countdown}s)"
-  },
   "6QtXvB": {
     "message": "验证邮件已发送！请检查收件箱。"
   },
   "6WiliO": {
     "message": "可以访问论坛 {forumUrl} 进行讨论和反馈。"
+  },
+  "6hHVei": {
+    "message": "编辑话题"
   },
   "6q3tCn": {
     "message": "正在连接"
@@ -155,23 +170,26 @@
   "72vKlS": {
     "message": "载入位面失败"
   },
-  "7G8Ojg": {
-    "message": "无法发送信息"
-  },
   "7UOvbT": {
     "message": "离线"
   },
+  "7VFLWn": {
+    "message": "搜索消息"
+  },
+  "7ifIhk": {
+    "message": "保存话题"
+  },
   "7q87xo": {
     "message": "频道设置"
+  },
+  "7tSUe8": {
+    "message": "返回登入"
   },
   "8+j66D": {
     "message": "确实要删除这条消息？"
   },
   "82Y7Sa": {
     "message": "发送中..."
-  },
-  "88cMEG": {
-    "message": "摧毁位面"
   },
   "8be59M": {
     "message": "邮箱验证成功！"
@@ -203,8 +221,17 @@
   "9to/Le": {
     "message": "更改头像"
   },
+  "A3J8Sf": {
+    "message": "等{countdown}秒"
+  },
+  "ANFxqj": {
+    "message": "只要游戏内"
+  },
   "AVI/0j": {
     "message": "拆分"
+  },
+  "AYIKp4": {
+    "message": "已经有账户了？登入"
   },
   "AbXVP4": {
     "message": "创建于"
@@ -263,14 +290,23 @@
   "DBP+Od": {
     "message": "Echo"
   },
+  "EcW+hX": {
+    "message": "仅选中的人可见。"
+  },
   "F3Wc9W": {
     "message": "过去{day}天"
+  },
+  "FGo9HD": {
+    "message": "我在的位面"
   },
   "FN6jdd": {
     "message": "贵安，{username}！"
   },
   "FazwRl": {
     "message": "再试一次"
+  },
+  "FqI37D": {
+    "message": "最古开始"
   },
   "GEhexi": {
     "message": "在暗色模式"
@@ -284,17 +320,20 @@
   "GbWVAh": {
     "message": "是的，踢走"
   },
+  "H2WXs6": {
+    "message": "摧毁位面"
+  },
   "HAlOn1": {
     "message": "名字"
   },
   "HH8O0c": {
     "message": "请求失败，可能是网络异常。"
   },
+  "HOuWsl": {
+    "message": "开发者选项"
+  },
   "HSaR2M": {
     "message": "是否为秘密频道？"
-  },
-  "HTmh5Q": {
-    "message": "目标"
   },
   "HlQPHQ": {
     "message": "加入位面"
@@ -341,6 +380,9 @@
   "JQt0RP": {
     "message": "下拉刷新"
   },
+  "JXdbo8": {
+    "message": "没事"
+  },
   "Jc0JUv": {
     "message": "输入框崩溃了。您最后的输入是："
   },
@@ -362,11 +404,11 @@
   "K8uxGU": {
     "message": "密码重置邮件已发送。"
   },
-  "KIAp17": {
-    "message": "不带富文本信息"
-  },
   "KN7zKn": {
     "message": "错误"
+  },
+  "KUUb8m": {
+    "message": "不支持的媒体类型。"
   },
   "KhLK4z": {
     "message": "您没有权限查看此位面。"
@@ -374,8 +416,14 @@
   "Kp8wZw": {
     "message": "还没有设置简介"
   },
+  "KqJr7f": {
+    "message": "点击复制"
+  },
   "KzpV1w": {
     "message": "你的邮箱还没验证，请{verifyEmail}。"
+  },
+  "L/Ows0": {
+    "message": "扫描了{scanned}条，{matched}条匹配"
   },
   "L01rMU": {
     "message": "成员默认将作为本人发言。"
@@ -389,14 +437,23 @@
   "LXxsbk": {
     "message": "匿名"
   },
+  "Ln00Sy": {
+    "message": "无法发送信息。"
+  },
   "LnM0On": {
     "message": "{a} 和 {b} 正撰写…"
+  },
+  "LtEjKk": {
+    "message": "聚焦下一个"
   },
   "Lzb4s2": {
     "message": "移动失败"
   },
+  "M8AFCu": {
+    "message": "长按垂直拆分"
+  },
   "MWO2zy": {
-    "message": "出了点问题。"
+    "message": "出错了。"
   },
   "MgRaWS": {
     "message": "频道名不可为空"
@@ -410,9 +467,6 @@
   "MoZLbF": {
     "message": "暂不支持"
   },
-  "MqRkT1": {
-    "message": "不支持的媒体类型"
-  },
   "Mqn9K5": {
     "message": "找不到人"
   },
@@ -425,11 +479,17 @@
   "NA+vcf": {
     "message": "请验证您的邮箱以登录论坛。"
   },
+  "NNQzoi": {
+    "message": "正在搜索…"
+  },
   "NXI/XL": {
     "message": "自动"
   },
   "NXv+Ue": {
     "message": "关闭通知"
+  },
+  "NYTPf9": {
+    "message": "设好角色名才能发送游戏内消息。"
   },
   "NZyhSX": {
     "message": "新闻"
@@ -442,9 +502,6 @@
   },
   "OWhbRI": {
     "message": "按下按钮时将插入的命令。"
-  },
-  "OYT4m/": {
-    "message": "消息不能为空"
   },
   "OtUXSR": {
     "message": "请输入信息"
@@ -464,8 +521,14 @@
   "Pe0ogR": {
     "message": "主题"
   },
+  "PfPUv3": {
+    "message": "是否广播输入预览。"
+  },
   "PiX/VH": {
     "message": "在换行处将消息拆分成多条"
+  },
+  "PpzpBO": {
+    "message": "点击查看"
   },
   "PwaN2o": {
     "message": "欢迎"
@@ -491,6 +554,9 @@
   "Qm+Ijg": {
     "message": "该邮箱尚未注册"
   },
+  "QudmKz": {
+    "message": "切换连接"
+  },
   "R59CS8": {
     "message": "移除头像"
   },
@@ -499,6 +565,9 @@
   },
   "RraqCg": {
     "message": "帐号与密码不匹配"
+  },
+  "Rtr4mH": {
+    "message": "拖拽移动整列"
   },
   "RvUa7+": {
     "message": "无名称"
@@ -533,6 +602,9 @@
   "TAyWna": {
     "message": "邀请你到此位面"
   },
+  "TBI2DU": {
+    "message": "{name} 的头像"
+  },
   "TDaF6J": {
     "message": "知道了"
   },
@@ -548,6 +620,9 @@
   "TwyMau": {
     "message": "账号"
   },
+  "UKhyJG": {
+    "message": "文件大小不能超过 {sizeLimit}M。"
+  },
   "UdtpV7": {
     "message": "主题"
   },
@@ -559,9 +634,6 @@
   },
   "Ujs8Kg": {
     "message": "来自服务器的消息"
-  },
-  "UyfeTd": {
-    "message": "这里是新版本的菠萝，仍在活跃开发中。如果你更想回到旧版，请访问"
   },
   "V/JHlm": {
     "message": "忘记密码?"
@@ -608,6 +680,9 @@
   "WwpJ5A": {
     "message": "发送密码重置邮件"
   },
+  "Wy+RsN": {
+    "message": "信息不得为空。"
+  },
   "X2YA3V": {
     "message": "提交的数据没有通过核查。"
   },
@@ -653,20 +728,20 @@
   "Yq91Dy": {
     "message": "导出「{channelName}」"
   },
+  "YukZFG": {
+    "message": "你可以在 {githubUrl} 查看源代码。"
+  },
   "Yw/mtA": {
     "message": "编辑失败"
   },
   "Yy/yDL": {
     "message": "重置密码"
   },
-  "ZKBnrB": {
-    "message": "必须填写角色名"
-  },
-  "ZMoczs": {
-    "message": "位面"
-  },
   "ZgsEsn": {
     "message": "没有权限"
+  },
+  "ZsZAvL": {
+    "message": "拖动移动子窗格"
   },
   "ZvI2/H": {
     "message": "释放加载"
@@ -722,6 +797,9 @@
   "clpFBW": {
     "message": "位面公开性"
   },
+  "cnenZ4": {
+    "message": "如果您想要调试或开发功能，请启用此功能。"
+  },
   "cpFKi9": {
     "message": "主题可以用来记录和提醒您当前关注的内容。"
   },
@@ -730,6 +808,9 @@
   },
   "dVoumD": {
     "message": "我在频道中的角色名（可选）"
+  },
+  "dZYazP": {
+    "message": "最新开始"
   },
   "dlu6r1": {
     "message": "电子表格"
@@ -764,6 +845,9 @@
   "ecjViF": {
     "message": "删除失败"
   },
+  "eqOw+7": {
+    "message": "开发模式"
+  },
   "f00p/7": {
     "message": "上传失败"
   },
@@ -782,11 +866,11 @@
   "fnihsY": {
     "message": "离开"
   },
-  "fsU2v+": {
-    "message": "位面间跳跃"
-  },
   "ftsMiH": {
     "message": "游戏内/外"
+  },
+  "fxvXUy": {
+    "message": "揭开"
   },
   "gEes7R": {
     "message": "为了接受邀请，你需要先 {loginLink}。"
@@ -806,9 +890,6 @@
   "hYOE+U": {
     "message": "邀请"
   },
-  "had27J": {
-    "message": "还原草稿"
-  },
   "hgvaRE": {
     "message": "请在提交 bug 时附带这个 ID"
   },
@@ -817,6 +898,9 @@
   },
   "hrgo+E": {
     "message": "归档"
+  },
+  "huqwHp": {
+    "message": "{start} 最新改于 {updated}"
   },
   "iATkrL": {
     "message": "窗格崩溃了"
@@ -830,6 +914,9 @@
   "iLUQIP": {
     "message": "邀请链接"
   },
+  "iU6/rV": {
+    "message": "移动窗格"
+  },
   "itPgxd": {
     "message": "个人资料"
   },
@@ -842,8 +929,8 @@
   "jd7fUZ": {
     "message": "在{countdown}秒后可以重发"
   },
-  "jtLNcT": {
-    "message": "移动消息失败，找不到目的地，请再试一下。"
+  "jsy7pk": {
+    "message": "重试"
   },
   "k1s9UW": {
     "message": "未找到"
@@ -854,6 +941,9 @@
   "kGQJcD": {
     "message": "排序"
   },
+  "kHHCWR": {
+    "message": "调整尺寸"
+  },
   "kIUNDX": {
     "message": "默认使用的骰子"
   },
@@ -862,6 +952,9 @@
   },
   "kh4wt0": {
     "message": "切换侧边栏"
+  },
+  "l+qC1C": {
+    "message": "包括名字"
   },
   "lJePcp": {
     "message": "失败"
@@ -913,6 +1006,9 @@
   },
   "onmBf2": {
     "message": "换一个随机颜色"
+  },
+  "p556q3": {
+    "message": "已复制"
   },
   "pBQ5bd": {
     "message": "编辑中"
@@ -977,6 +1073,9 @@
   "ro9oGh": {
     "message": "正在验证邮箱…"
   },
+  "ruZw+F": {
+    "message": "搜完了"
+  },
   "s+ixvA": {
     "message": "确定，摧毁「{spaceName}」"
   },
@@ -985,6 +1084,9 @@
   },
   "sMAAlN": {
     "message": "新增"
+  },
+  "sNa4oH": {
+    "message": "关闭窗格"
   },
   "sjzLbX": {
     "message": "接受"
@@ -1040,14 +1142,23 @@
   "viXE32": {
     "message": "非公开"
   },
+  "vnAZKt": {
+    "message": "没有匹配的消息。"
+  },
   "vnPoZm": {
     "message": "讲述你的冒险"
   },
   "w00UiA": {
     "message": "您的设备不支持发送通知。"
   },
+  "wAd2/k": {
+    "message": "标记为动作。"
+  },
   "wEQDC6": {
     "message": "编辑"
+  },
+  "wSL4YI": {
+    "message": "悄悄话时始终不会广播。"
   },
   "wV1fJ2": {
     "message": "默认颜色"
@@ -1088,6 +1199,9 @@
   "y63e7m": {
     "message": "邮箱"
   },
+  "yy3DLJ": {
+    "message": "不带富文本信息"
+  },
   "z/ipXX": {
     "message": "糟糕！"
   },
@@ -1105,5 +1219,8 @@
   },
   "zQvVDJ": {
     "message": "所有"
+  },
+  "zqHxkG": {
+    "message": "搜索消息失败"
   }
 }

@@ -1,5 +1,5 @@
 import { makeId } from '@boluo/utils/id';
-import { type Modifier, parseModifiers } from '../interpreter/parser';
+import { type Modifier, parseModifiers } from '@boluo/interpreter';
 import { type MediaError, validateMedia } from '../media';
 import { type ComposeAction, type ComposeActionUnion } from './compose.actions';
 import { type PreviewEdit } from '@boluo/api';
@@ -14,13 +14,14 @@ export interface ComposeState {
   source: string;
   media: File | string | null | undefined;
   whisperTo: // Represents whisper to the Game Master
-  | null
+    | null
     // Represents whisper to users (Game Master always can read all whisper messages)
     | string[]
     // Represents disabled whisper
     | undefined;
   focused: boolean;
   range: ComposeRange;
+  composingAt: number | null;
   backup?: ComposeState;
   edit: PreviewEdit | null;
 }
@@ -32,6 +33,7 @@ export const makeInitialComposeState = (): ComposeState => ({
   media: null,
   range: [0, 0],
   focused: false,
+  composingAt: null,
   whisperTo: undefined,
   edit: null,
 });
@@ -98,7 +100,7 @@ const handleRecoverState = (
   state: ComposeState,
   action: ComposeAction<'recoverState'>,
 ): ComposeState => {
-  return { ...action.payload, previewId: makeId(), media: null };
+  return { ...action.payload, previewId: makeId(), media: null, composingAt: null };
 };
 
 const handleAddDice = (
@@ -255,10 +257,12 @@ const handleToggleBroadcast = (
 
 const handleToggleWhisper = (
   state: ComposeState,
-  { payload: { username } }: ComposeAction<'toggleWhisper'>,
+  { payload: { usernames } }: ComposeAction<'toggleWhisper'>,
 ): ComposeState => {
   const { whisper } = parseModifiers(state.source);
-  const command = username != null ? `.h(@${username})` : '.h';
+  const targets = usernames.filter((name) => name.trim() !== '');
+  const mentions = targets.map((name) => `@${name}`).join(' ');
+  const command = targets.length === 0 ? '.h ' : `.h(${mentions}) `;
   return toggleModifier(state, whisper, command);
 };
 
@@ -296,6 +300,7 @@ const handleSent = (
     range: [source.length, source.length],
     media: null,
     source,
+    composingAt: null,
   };
 };
 
@@ -315,6 +320,23 @@ const handleFocus = (state: ComposeState, _: ComposeAction<'focus'>): ComposeSta
 const handleBlur = (state: ComposeState, _: ComposeAction<'blur'>): ComposeState => ({
   ...state,
   focused: false,
+  composingAt: null,
+});
+
+const handleCompositionStart = (
+  state: ComposeState,
+  _: ComposeAction<'compositionStart'>,
+): ComposeState => ({
+  ...state,
+  composingAt: Date.now(),
+});
+
+const handleCompositionEnd = (
+  state: ComposeState,
+  _: ComposeAction<'compositionEnd'>,
+): ComposeState => ({
+  ...state,
+  composingAt: null,
 });
 
 const handleReset = (
@@ -325,10 +347,10 @@ const handleReset = (
     return makeInitialComposeState();
   }
   if (restore === true && state.backup != null) {
-    return state.backup;
+    return { ...state.backup, composingAt: null };
   }
   if (state.edit != null && state.backup != null) {
-    return state.backup;
+    return { ...state.backup, composingAt: null };
   }
   return makeInitialComposeState();
 };
@@ -344,10 +366,10 @@ const handleAddWhisperTarget = (
   }
   let mentionList = [username];
   if (whisper && !whisper.usernames.includes(username)) {
-    mentionList = whisper.usernames.concat([username]);
+    mentionList = [username].concat(whisper.usernames);
   }
   const mentions = mentionList.map((u) => `@${u}`).join(' ');
-  const modifiedModifier = `.h(${mentions})`;
+  const modifiedModifier = `.h(${mentions}) `;
 
   return modifyModifier(state, whisper, modifiedModifier);
 };
@@ -364,7 +386,7 @@ const handleRemoveWhisperTarget = (
     .filter((u) => u !== username)
     .map((u) => `@${u}`)
     .join(' ');
-  const modifiedModifier = `.h(${mentions})`;
+  const modifiedModifier = mentions ? `.h(${mentions}) ` : '.h';
 
   return modifyModifier(state, whisper, modifiedModifier);
 };
@@ -424,6 +446,10 @@ export const composeReducer = (state: ComposeState, action: ComposeActionUnion):
       return handleAddWhisperTarget(state, action);
     case 'removeWhisperTarget':
       return handleRemoveWhisperTarget(state, action);
+    case 'compositionStart':
+      return handleCompositionStart(state, action);
+    case 'compositionEnd':
+      return handleCompositionEnd(state, action);
   }
 };
 

@@ -31,26 +31,8 @@ export const BaseUrlSelector: FC = () => {
     setBackendUrl(backendUrl);
   };
   return (
-    <div>
-      <div>
-        <FormattedMessage defaultMessage="Change Connection Region" />
-        <div className="text-text-primary flex flex-col gap-1 pt-1">
-          {proxies.map((proxy, index) => {
-            const result = testReuslt.find((item) => item.proxy.name === proxy.name);
-            return (
-              <BaseUrlSelectorItem
-                key={index}
-                proxy={proxy}
-                result={result?.rtt}
-                selected={proxy.url === backendUrl}
-                setUrl={handleSelect}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      <label className="flex items-center gap-1 py-2">
+    <div className="flex flex-col gap-2">
+      <label className="flex items-center gap-2 px-1 text-sm">
         <input
           type="checkbox"
           checked={backendUrlConfig === 'auto'}
@@ -60,6 +42,20 @@ export const BaseUrlSelector: FC = () => {
           <FormattedMessage defaultMessage="Auto Select" />
         </span>
       </label>
+      <div className="text-text-primary flex flex-col">
+        {proxies.map((proxy, index) => {
+          const result = testReuslt.find((item) => item.proxy.name === proxy.name);
+          return (
+            <BaseUrlSelectorItem
+              key={index}
+              proxy={proxy}
+              result={result?.rtt}
+              selected={proxy.url === backendUrl}
+              setUrl={handleSelect}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 };

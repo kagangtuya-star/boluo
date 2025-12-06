@@ -12,7 +12,7 @@ import { ChatSpace } from './ChatSpace';
 import { PaneLoading } from './PaneLoading';
 import { Sidebar } from './sidebar/Sidebar';
 import { BannerContext } from '../hooks/useBannerNode';
-import { useDetectIsTouch, IsTouchContext } from '@boluo/common/hooks/useIsTouch';
+import { useDetectIsTouch, IsTouchContext } from '@boluo/ui/hooks/useIsTouch';
 import screens from '@boluo/ui/screens.json';
 import {
   type ResolvedTheme,
@@ -83,7 +83,7 @@ const Chat: FC = () => {
                   {!isClient ? (
                     <PaneEmpty />
                   ) : (
-                    <Suspense fallback={<PaneLoading grow />}>
+                    <Suspense fallback={<PaneLoading initSizeLevel={1} />}>
                       {route.type === 'SPACE' && (
                         <ChatSpace key={route.spaceId} spaceId={route.spaceId} />
                       )}
@@ -107,10 +107,10 @@ const Chat: FC = () => {
 export const ChatContentBox: FC<{ children: ReactNode }> = ({ children }) => {
   const [isSidebarExpanded, setSidebarExpanded] = useAtom(isSidebarExpandedAtom);
   const noPane = useAtomValue(isNoPaneAtom);
-  const [shouldAutoFold, setShouldAutoFold] = useState(false);
-  if (typeof window !== 'undefined' && window.innerWidth < screens.sm) {
-    setShouldAutoFold(true);
-  }
+  const [shouldAutoFold, setShouldAutoFold] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth < screens.sm;
+  });
   useEffect(() => {
     let timeout: number | undefined;
     const observer = new ResizeObserver((entries) => {
@@ -133,7 +133,8 @@ export const ChatContentBox: FC<{ children: ReactNode }> = ({ children }) => {
       onTouchStart={autoFoldSidebar}
       onClick={autoFoldSidebar}
       className={clsx(
-        'md:divide-border-subtle relative -col-end-1 flex h-full min-h-0 w-full flex-[1_0] flex-nowrap overflow-y-hidden transition duration-300 max-md:overflow-y-hidden md:divide-x md:overflow-x-auto',
+        'ChatContentBox',
+        'md:divide-border-pane relative -col-end-1 flex h-full min-h-0 w-full flex-[1_0] flex-nowrap overflow-y-hidden transition duration-300 max-md:overflow-y-hidden md:divide-x md:overflow-x-auto',
         showMask ? 'cursor-pointer brightness-50' : '',
       )}
     >

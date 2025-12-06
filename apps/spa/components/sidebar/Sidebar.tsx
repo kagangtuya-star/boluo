@@ -1,11 +1,12 @@
 import clsx from 'clsx';
 import { useQueryCurrentUser } from '@boluo/common/hooks/useQueryCurrentUser';
 import { useAtom, useAtomValue } from 'jotai';
-import { useEffect, type FC, type ReactNode } from 'react';
+import { useEffect, useMemo, type FC, type ReactNode } from 'react';
 import { isSidebarExpandedAtom, sidebarContentStateAtom } from '../../state/ui.atoms';
 import { SidebarChannels } from './SidebarChannels';
 import { SidebarSpaceList } from './SidebarSpaceList';
 import { SpaceOptions } from './SidebarSpaceOptions';
+import { SidebarButton } from '@boluo/ui/chat/SidebarButton';
 import { SidebarUserOperations } from './SidebarUserOperations';
 import { ConnectionIndicatior } from './ConnectionIndicator';
 import { useQuerySpace } from '../../hooks/useQuerySpace';
@@ -13,10 +14,12 @@ import { type User } from '@boluo/api';
 import { AppOperations } from './AppOperations';
 import { useIsClient } from '@boluo/common/hooks/useIsClient';
 import { isApple } from '@boluo/utils/browser';
-import { SidebarButton } from './SidebarButton';
 import { useSetThemeColor } from '../../hooks/useSetThemeColor';
 import { SidebarGuestContent } from './SidebarGuestContent';
 import { SidebarContentLoading } from './SidebarContentLoading';
+import { SidebarConnectionSelector } from './SidebarConnectionSelector';
+import { connectionStateAtom } from '../../state/chat.atoms';
+import { SidebarButtonController } from './SidebarButtonController';
 
 interface Props {
   spaceId?: string;
@@ -48,6 +51,7 @@ const SidebarContent: FC<{ spaceId: string; currentUser: User | undefined | null
 export const Sidebar: FC<Props> = ({ spaceId }) => {
   const { data: currentUser, isLoading: isQueryingUser } = useQueryCurrentUser();
   const isClient = useIsClient();
+  const contentState = useAtomValue(sidebarContentStateAtom);
   const [isExpanded, setExpanded] = useAtom(isSidebarExpandedAtom);
   useSetThemeColor(isExpanded);
   useEffect(() => {
@@ -65,13 +69,17 @@ export const Sidebar: FC<Props> = ({ spaceId }) => {
       window.removeEventListener('keydown', listener);
     };
   }, [setExpanded]);
-  const foldedNode = <SidebarButton />;
+  const sidebarButton = useMemo(() => {
+    return <SidebarButtonController />;
+  }, []);
   if (!isExpanded) {
-    return foldedNode;
+    return sidebarButton;
   }
   let content: ReactNode = <SidebarContentLoading />;
   if (!isClient) {
     content = <SidebarContentLoading />;
+  } else if (contentState === 'CONNECTIONS') {
+    content = <SidebarConnectionSelector />;
   } else if (spaceId == null) {
     if (isQueryingUser) {
       content = <SidebarContentLoading />;
@@ -87,7 +95,7 @@ export const Sidebar: FC<Props> = ({ spaceId }) => {
   return (
     <div
       className={clsx(
-        'bg-bg standalone-bottom-padding relative flex h-full min-h-0 flex-none flex-col',
+        'Sidebar bg-sidebar-bg standalone-bottom-padding border-sidebar-border relative flex h-full min-h-0 flex-none flex-col border-r',
       )}
     >
       <div
@@ -101,7 +109,7 @@ export const Sidebar: FC<Props> = ({ spaceId }) => {
 
           {isClient && <ConnectionIndicatior spaceId={spaceId} />}
         </div>
-        <SidebarButton />
+        {sidebarButton}
       </div>
     </div>
   );

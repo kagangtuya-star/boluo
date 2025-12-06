@@ -1,11 +1,12 @@
 import clsx from 'clsx';
-import { type FC, type ReactNode, useContext, useMemo } from 'react';
+import { type FC, type ReactNode, useCallback, useContext, useMemo } from 'react';
 import { stopPropagation } from '@boluo/utils/browser';
-import { usePaneBanner } from '../hooks/useBanner';
+import { usePaneBanner, useSetBanner } from '../hooks/useBanner';
 import { PaneContext } from '../state/view.context';
 import { ClosePaneButton } from './ClosePaneButton';
-import { PaneBanner } from './PaneBanner';
+import { PaneBanner } from '@boluo/ui/PaneBanner';
 import { Square } from '@boluo/icons';
+import { PaneDragHandle } from './PaneDragHandle';
 
 interface Props {
   withoutDefaultOperators?: boolean;
@@ -24,14 +25,18 @@ export const PaneHeaderBox: FC<Props> = ({
 }) => {
   const { focused: isFocused, canClose } = useContext(PaneContext);
   const paneBanner = usePaneBanner();
+  const setBanner = useSetBanner();
+  const dismissBanner = useCallback(() => setBanner(null), [setBanner]);
   const defaultOperators: ReactNode = useMemo(() => {
     if (withoutDefaultOperators || canClose === false) return null;
     return <ClosePaneButton />;
   }, [withoutDefaultOperators, canClose]);
   icon = icon ?? <Square />;
+  const dragHandle = useMemo(() => <PaneDragHandle />, []);
   return (
-    <div className="">
-      <div className="min-h-pane-header bg-pane-header-bg pl-pane flex items-center pr-[6px] text-sm">
+    <div className="PaneHeaderBox">
+      <div className="min-h-pane-header bg-pane-header-bg pl-pane relative flex items-center pr-1.5 text-sm">
+        {dragHandle}
         <span
           className={clsx(
             'inline-flex shrink-0 items-center justify-center pr-1',
@@ -43,7 +48,7 @@ export const PaneHeaderBox: FC<Props> = ({
         <div className="inline-flex min-w-0 grow flex-nowrap items-center">
           <div
             className={clsx(
-              'flex-shrink overflow-hidden text-ellipsis whitespace-nowrap',
+              'shrink overflow-hidden text-ellipsis whitespace-nowrap',
               isFocused ? 'text-text-primary' : 'text-text-subtle',
             )}
           >
@@ -59,7 +64,7 @@ export const PaneHeaderBox: FC<Props> = ({
       </div>
 
       <div className="">
-        {paneBanner.content && <PaneBanner banner={paneBanner} />}
+        {paneBanner.content && <PaneBanner onDismiss={dismissBanner} banner={paneBanner} />}
         {extra}
       </div>
     </div>

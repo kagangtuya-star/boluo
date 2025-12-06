@@ -3,7 +3,7 @@ import { type FC } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import { useComposeError } from '../../hooks/useComposeError';
 import { InComposeButton } from './InComposeButton';
-import { useTooltip } from '@boluo/common/hooks/useTooltip';
+import { useTooltip } from '@boluo/ui/hooks/useTooltip';
 import { TooltipBox } from '@boluo/ui/TooltipBox';
 import { useSettings } from '../../hooks/useSettings';
 import { Kbd } from '@boluo/ui/Kbd';
@@ -45,7 +45,7 @@ export const SendButton: FC<Props> = ({ isEditing = false, send }) => {
             <Kbd variant="small">↵</Kbd>
           ) : (
             <>
-              <Kbd variant="small">{isApple() ? '⌘' : '↵'}</Kbd>
+              <Kbd variant="small">{isApple() ? '⌘' : 'Ctrl'}</Kbd>
               <span> + </span>
               <Kbd variant="small">↵</Kbd>
             </>

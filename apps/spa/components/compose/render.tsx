@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { type ParseResult } from '../../interpreter/parse-result';
+import { type ParseResult } from '@boluo/interpreter';
 
 // Note: The `parsed` is possibly stale due to the delay in the `useDeferredValue` hook.
 export const composeRender =
@@ -29,7 +29,11 @@ export const composeRender =
       }
       const end = entity.start + entity.len;
       const segment = text.slice(entity.start, end);
-      if (entity.type === 'Strong' || entity.type === 'Emphasis') {
+      if (
+        entity.type === 'Strong' ||
+        entity.type === 'Emphasis' ||
+        entity.type === 'StrongEmphasis'
+      ) {
         nodes.push(
           <span key={key} className="bg-surface-muted rounded-sm">
             {segment}

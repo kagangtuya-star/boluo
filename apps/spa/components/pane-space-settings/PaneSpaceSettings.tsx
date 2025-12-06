@@ -24,6 +24,7 @@ import { PaneBox } from '../PaneBox';
 import { PaneHeaderBox } from '../PaneHeaderBox';
 import { FieldDestroySpace } from './FieldDestroySpace';
 import { Failed } from '@boluo/ui/Failed';
+import { PaneFooterBox } from '../PaneFooterBox';
 
 interface Props {
   spaceId: string;
@@ -72,7 +73,12 @@ const InvitationField: FC<{ spaceId: string }> = ({ spaceId }) => {
   return (
     <div>
       <div>
-        <Button onClick={() => setExpanded((x) => !x)} variant="detail" on={expanded} type="button">
+        <Button
+          onClick={() => setExpanded((x) => !x)}
+          variant="detail"
+          aria-pressed={expanded}
+          type="button"
+        >
           <FormattedMessage defaultMessage="Invite" />
         </Button>
       </div>
@@ -160,12 +166,14 @@ const PublicityField: FC = () => {
   );
 };
 
+const DEFAULT_DICE_TYPE = 'd20';
+
 const FieldDefaultDice: FC = () => {
   const {
     field: { onChange, value },
   } = useController<FormSchema, 'defaultDiceType'>({
     name: 'defaultDiceType',
-    defaultValue: 'd20',
+    defaultValue: DEFAULT_DICE_TYPE,
   });
   return (
     <div>
@@ -173,15 +181,11 @@ const FieldDefaultDice: FC = () => {
         <div className="py-1">
           <FormattedMessage defaultMessage="Default Dice" />
         </div>
-        <DiceSelect value={value} onChange={onChange} />
+        <DiceSelect value={value ?? DEFAULT_DICE_TYPE} onChange={onChange} />
       </label>
     </div>
   );
 };
-
-const PaneFooterBox: FC<ChildrenProps> = ({ children }) => (
-  <div className="bg-pane-bg sticky bottom-0 flex justify-end gap-2 border-t p-4">{children}</div>
-);
 
 const spaceToForm = (space: Space): FormSchema => ({
   spaceId: space.id,
@@ -255,7 +259,7 @@ const PaneSpaceSettingsForm: FC<{ space: Space }> = ({ space }) => {
             <DangerZone
               prompt={
                 <span className="text-lg">
-                  <FormattedMessage defaultMessage="Destory Space" />
+                  <FormattedMessage defaultMessage="Destroy Space" />
                 </span>
               }
             >

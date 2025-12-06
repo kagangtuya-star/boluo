@@ -1,14 +1,13 @@
 import { type FC, useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import {
+  PALETTE_PREFIX,
+  RANDOM_PREFIX,
+  computeColors,
+  generateColor,
   palette,
   paletteKeys,
-  generateColor,
-  RANDOM_PREFIX,
-  PALETTE_PREFIX,
   parseGameColor,
-  computeColors,
-  // isValidHexColor,
-} from '../../color';
+} from '@boluo/color';
 import { type ApiError, type User } from '@boluo/api';
 import { FormattedMessage } from 'react-intl';
 import useSWRMutation from 'swr/mutation';
@@ -135,7 +134,7 @@ export const EditDefaultColor: FC<{ currentUser: User }> = ({ currentUser }) => 
 
   const handleEditDefaultColor = useCallback(
     (color: string) => {
-      if (color && color !== currentUser.defaultColor) {
+      if (color !== currentUser.defaultColor) {
         void trigger(color);
       }
     },
@@ -233,25 +232,25 @@ export const EditDefaultColor: FC<{ currentUser: User }> = ({ currentUser }) => 
         <FormattedMessage defaultMessage="Default Color" />
       </div>
       <div className="flex w-full gap-2 py-4">
-        <div className="bg-light-bg rounded-lg border p-6" style={{ color: computedColors.light }}>
-          <FormattedMessage defaultMessage="In Light Mode" />
+        <div className="light">
+          <div className="bg-pane-bg rounded-lg border p-6" style={{ color: computedColors.light }}>
+            <FormattedMessage defaultMessage="In Light Mode" />
+          </div>
         </div>
-        <div className="bg-dark-bg rounded-lg border p-6" style={{ color: computedColors.dark }}>
-          <FormattedMessage defaultMessage="In Dark Mode" />
+        <div className="dark">
+          <div className="bg-pane-bg rounded-lg border p-6" style={{ color: computedColors.dark }}>
+            <FormattedMessage defaultMessage="In Dark Mode" />
+          </div>
         </div>
       </div>
 
       {/* Random Color Section */}
       <div className="flex items-center gap-2 py-2">
         <ColorCell
-          title="Random Color"
-          color={currentRandomColor}
-          selected={isRandomSelected}
-          onClick={() => {
-            handleEditDefaultColor(RANDOM_PREFIX + randomColorSeedSuffix);
-            setShowColorPicker(false);
-          }}
-          isLoading={isMutating && isRandomSelected}
+          color={generateColor(currentUser.id + randomColorSeedSuffix)}
+          selected={parsedColors[theme].type === 'random'}
+          onClick={() => handleEditDefaultColor(RANDOM_PREFIX + randomColorSeedSuffix)}
+          isLoading={isMutating}
         />
         <Button
           onClick={() => {
@@ -360,11 +359,8 @@ export const EditDefaultColor: FC<{ currentUser: User }> = ({ currentUser }) => 
               title={`Palette: ${colorKey}`}
               color={palette[colorKey][theme]}
               selected={selected}
-              onClick={() => {
-                handleEditDefaultColor(paletteColorString);
-                setShowColorPicker(false);
-              }}
-              isLoading={isMutating && selected}
+              onClick={() => handleEditDefaultColor(`${PALETTE_PREFIX}${color}`)}
+              isLoading={isMutating}
             />
           );
         })}

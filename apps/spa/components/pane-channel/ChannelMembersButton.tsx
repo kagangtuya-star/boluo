@@ -4,7 +4,7 @@ import { type FC, useMemo } from 'react';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
 import { useQueryChannelMembers } from '../../hooks/useQueryChannelMembers';
 import { useQueryUsersStatus } from '../../hooks/useQueryUsersStatus';
-import { SidebarHeaderButton } from '../sidebar/SidebarHeaderButton';
+import { PaneHeaderButton } from '@boluo/ui/PaneHeaderButton';
 
 interface Props {
   channelId: string;
@@ -12,8 +12,8 @@ interface Props {
 }
 
 export const ChannelMembersButton: FC<Props> = ({ channelId, spaceId }) => {
-  const { memberListStateAtom } = useChannelAtoms();
-  const [memberListState, setMemberListState] = useAtom(memberListStateAtom);
+  const { subPaneStateAtom } = useChannelAtoms();
+  const [subPaneState, setSubPaneState] = useAtom(subPaneStateAtom);
   const { data: membersInfo, isLoading } = useQueryChannelMembers(channelId);
   const { data: userStatus } = useQueryUsersStatus(spaceId);
   const onlineCount = useMemo(() => {
@@ -27,11 +27,11 @@ export const ChannelMembersButton: FC<Props> = ({ channelId, spaceId }) => {
     }, 0);
   }, [membersInfo, userStatus]);
   return (
-    <SidebarHeaderButton
-      active={memberListState !== 'CLOSED'}
+    <PaneHeaderButton
+      active={subPaneState === 'MEMBER_LIST'}
       isLoading={isLoading}
       onClick={() =>
-        setMemberListState((prevState) => (prevState !== 'CLOSED' ? 'CLOSED' : 'RIGHT'))
+        setSubPaneState((prevState) => (prevState === 'MEMBER_LIST' ? 'NONE' : 'MEMBER_LIST'))
       }
     >
       <Users />
@@ -40,6 +40,6 @@ export const ChannelMembersButton: FC<Props> = ({ channelId, spaceId }) => {
           {onlineCount}/{membersInfo.members.length}
         </span>
       )}
-    </SidebarHeaderButton>
+    </PaneHeaderButton>
   );
 };

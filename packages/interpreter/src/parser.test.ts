@@ -1,0 +1,183 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { Entity } from '@boluo/api';
+import { type Env, parse as originalParse } from './parser';
+
+const parse = (source: string, parseExpr = true, env?: Env) => {
+  const { entities, text } = originalParse(source, parseExpr, env);
+  assert.strictEqual(text, source);
+  return entities.filter((entity) => entity.type !== 'Text');
+};
+
+test('parse emphasis', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 7,
+      type: 'Emphasis',
+      child: {
+        type: 'Text',
+        start: 7,
+        len: 5,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello *world*!'), expected);
+});
+
+test('parse link', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 27,
+      type: 'Link',
+      href: {
+        start: 14,
+        len: 18,
+      },
+      child: {
+        type: 'Text',
+        start: 7,
+        len: 5,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello [world](https://masiro.me/)!'), expected);
+});
+
+test('parse string', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 6,
+      type: 'Strong',
+      child: {
+        type: 'Text',
+        start: 8,
+        len: 2,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello **世界**！！！！'), expected);
+});
+
+test('parse strong emphasis', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 11,
+      type: 'StrongEmphasis',
+      child: {
+        type: 'Text',
+        start: 9,
+        len: 5,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello ***world***!'), expected);
+});
+
+test('parse auto link', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 31,
+      type: 'Link',
+      href: {
+        start: 6,
+        len: 31,
+      },
+      child: {
+        type: 'Text',
+        start: 6,
+        len: 31,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello https://www.lightnovel.app/home'), expected);
+});
+
+test('parse code', () => {
+  const inlineCode: Entity[] = [
+    {
+      start: 6,
+      len: 6,
+      type: 'Code',
+      child: {
+        type: 'Text',
+        start: 7,
+        len: 4,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello `Uw U` world'), inlineCode);
+  assert.deepStrictEqual(parse('hello `Uw\n U` world'), []);
+});
+
+test('parse code block', () => {
+  const expected: Entity[] = [
+    {
+      start: 6,
+      len: 11,
+      type: 'CodeBlock',
+      child: {
+        type: 'Text',
+        start: 9,
+        len: 4,
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('hello ```Uw U``` world'), expected);
+});
+
+test('parse modifier', () => {
+  assert.strictEqual(originalParse('hello').broadcast, true);
+  assert.strictEqual(originalParse('.mute').broadcast, false);
+  assert.strictEqual(originalParse('.Mute').broadcast, false);
+  assert.strictEqual(originalParse('.in ').inGame, true);
+  assert.strictEqual(originalParse('.In ').inGame, true);
+  assert.strictEqual(originalParse('.Ins').inGame, null);
+  // assert.strictEqual(originalParse('.out').inGame, false);
+  // assert.strictEqual(originalParse('.OUT').inGame, false);
+});
+
+test('parse roll', () => {
+  assert.deepStrictEqual(parse('1d20'), []);
+
+  const singleRoll: Entity[] = [
+    {
+      type: 'Expr',
+      start: 0,
+      len: 6,
+      node: {
+        counter: 1,
+        face: 20,
+        type: 'Roll',
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('{1d20}'), singleRoll);
+
+  const prefixedRoll: Entity[] = [
+    {
+      type: 'Expr',
+      start: 3,
+      len: 6,
+      node: {
+        counter: 1,
+        face: 20,
+        type: 'Roll',
+      },
+    },
+  ];
+
+  assert.deepStrictEqual(parse('/r {1d20}'), prefixedRoll);
+});

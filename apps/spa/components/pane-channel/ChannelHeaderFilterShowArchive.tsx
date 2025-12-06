@@ -4,8 +4,8 @@ import { type FC } from 'react';
 import { FormattedMessage } from 'react-intl';
 import Icon from '@boluo/ui/Icon';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
-import { SidebarHeaderButton } from '../sidebar/SidebarHeaderButton';
-import { useTooltip } from '@boluo/common/hooks/useTooltip';
+import { PaneHeaderButton } from '@boluo/ui/PaneHeaderButton';
+import { useTooltip } from '@boluo/ui/hooks/useTooltip';
 import { TooltipBox } from '@boluo/ui/TooltipBox';
 
 export const ChannelHeaderFilterShowArchive: FC = () => {
@@ -14,15 +14,19 @@ export const ChannelHeaderFilterShowArchive: FC = () => {
   const { showTooltip, refs, getFloatingProps, getReferenceProps, floatingStyles } = useTooltip();
   return (
     <>
-      <div ref={refs.setReference} {...getReferenceProps()}>
-        <SidebarHeaderButton size="small" active={show} onClick={() => setShow((x) => !x)}>
+      <div
+        className="ChannelHeaderFilterShowArchive"
+        ref={refs.setReference}
+        {...getReferenceProps()}
+      >
+        <PaneHeaderButton size="small" active={show} onClick={() => setShow((x) => !x)}>
           <span>
             <Icon icon={Archive} />
           </span>
           <span className="hidden @xl:inline">
             <FormattedMessage defaultMessage="Archived" />
           </span>
-        </SidebarHeaderButton>
+        </PaneHeaderButton>
       </div>
       <TooltipBox
         show={showTooltip}

@@ -4,9 +4,9 @@ import { useAtom } from 'jotai';
 import { type FC } from 'react';
 import { sidebarContentStateAtom } from '../../state/ui.atoms';
 import Icon from '@boluo/ui/Icon';
-import clsx from 'clsx';
 import { FormattedMessage } from 'react-intl';
 import { usePaneReplace } from '../../hooks/usePaneReplace';
+import { ButtonInline } from '@boluo/ui/ButtonInline';
 
 interface Props {
   space: Space;
@@ -23,27 +23,23 @@ export const SpaceOptions: FC<Props> = ({ space }) => {
     setSidebarState((prevState) => (prevState === 'SPACES' ? 'CHANNELS' : 'SPACES'));
   };
   return (
-    <div className="h-pane-header group flex w-full items-center gap-1 px-4 text-sm">
+    <div className="SpaceOptions h-pane-header group flex w-full items-center gap-1 px-4 text-sm">
       <button
-        className="hover:text-text-secondary inline min-w-0 grow items-center gap-2 truncate text-left font-bold"
+        className="hover:text-text-secondary inline min-w-0 shrink grow items-center gap-2 truncate text-left font-bold"
         onClick={handleClickSpaceName}
       >
-        {space.name}
+        <span className="cursor-pointer">{space.name}</span>
       </button>
-      <button
-        className={clsx(
-          'inline-block flex-none rounded-sm px-1 py-0.5 text-sm',
-          sidebarState === 'SPACES'
-            ? 'bg-surface-selectable-selected'
-            : 'bg-surface-selectable-default hover:bg-surface-selectable-hover',
-        )}
+      <ButtonInline
+        className="flex-none"
+        aria-pressed={sidebarState === 'SPACES'}
         onClick={handleClickSwitchSpace}
       >
         <Icon icon={Shuffle} />
-        <span className="ml-1 text-xs">
-          <FormattedMessage defaultMessage="Spaces" />
+        <span className="ml-1">
+          <FormattedMessage defaultMessage="Switch" />
         </span>
-      </button>
+      </ButtonInline>
     </div>
   );
 };

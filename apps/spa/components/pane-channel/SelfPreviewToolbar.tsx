@@ -1,6 +1,6 @@
-import React, { type FC, type ReactNode, useMemo } from 'react';
+import React, { Activity, type FC, type ReactNode, useMemo } from 'react';
 import { useChannelAtoms } from '../../hooks/useChannelAtoms';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useAtomValue, useSetAtom, useStore } from 'jotai';
 import Icon from '@boluo/ui/Icon';
 import {
   Edit,
@@ -11,14 +11,16 @@ import {
   Whisper,
   X,
 } from '@boluo/icons';
-import { FormattedMessage } from 'react-intl';
+import { FormattedMessage, IntlShape, useIntl } from 'react-intl';
 import { useComposeError } from '../../hooks/useComposeError';
 import { useSend } from './useSend';
 import { type User } from '@boluo/api';
-import clsx from 'clsx';
 import { ComposeErrorReason } from '../compose/ComposeErrorReason';
 import { useComposeAtom } from '../../hooks/useComposeAtom';
 import { selectAtom } from 'jotai/utils';
+import { ButtonInline } from '@boluo/ui/ButtonInline';
+import { useTooltip } from '@boluo/ui/hooks/useTooltip';
+import { TooltipBox } from '@boluo/ui/TooltipBox';
 
 interface Props {
   currentUser: User;
@@ -29,6 +31,8 @@ interface ToolbarButtonProps {
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
+  tooltip?: ReactNode;
+  variant?: 'default' | 'primary';
   ref?: React.Ref<HTMLButtonElement>;
 }
 
@@ -38,64 +42,95 @@ const ToolbarButton = ({
   active = false,
   disabled = false,
   ref,
+  tooltip,
+  variant = 'default',
 }: ToolbarButtonProps) => {
+  const { showTooltip, refs, getFloatingProps, getReferenceProps, floatingStyles } =
+    useTooltip('top-start');
   return (
-    <button
-      onClick={onClick}
-      onTouchEnd={(e) => {
-        // https://stackoverflow.com/a/71725297
-        e.preventDefault();
-        onClick();
-      }}
-      data-active={active}
-      ref={ref}
-      disabled={disabled}
-      className={clsx(
-        'bg-action-toggle-bg text-action-toggle-text inline-flex items-center gap-0.5 rounded-sm border border-transparent px-1 py-0.5 text-xs shadow-sm',
-        'hover:enabled:bg-action-toggle-bg-hover active-enabled:bg-action-toggle-bg-active',
-        'data-[active="true"]:border-border-strong data-[active="true"]:bg-action-toggle-selected-bg data-[active="true"]:hover:enabled:bg-action-toggle-selected-bg data-[active="true"]:translate-y-px',
-        'disabled:text-action-toggle-disabled-text disabled:bg-action-toggle-disabled-bg disabled:cursor-not-allowed',
+    <span ref={refs.setReference} {...getReferenceProps()}>
+      <ButtonInline
+        variant={variant}
+        onClick={onClick}
+        onTouchEnd={(e) => {
+          // https://stackoverflow.com/a/71725297
+          e.preventDefault();
+          onClick();
+        }}
+        data-active={active}
+        ref={ref}
+        disabled={disabled}
+      >
+        {children}
+      </ButtonInline>
+      {tooltip && (
+        <Activity mode={showTooltip ? 'visible' : 'hidden'}>
+          <TooltipBox
+            show
+            style={floatingStyles}
+            ref={refs.setFloating}
+            {...getFloatingProps()}
+            defaultStyle
+          >
+            {tooltip}
+          </TooltipBox>
+        </Activity>
       )}
-    >
-      {children}
-    </button>
+    </span>
   );
 };
 
-const MuteButton = () => {
+const MuteButton: FC<{ intl: IntlShape }> = ({ intl }) => {
   const { broadcastAtom, isWhisperAtom, composeAtom } = useChannelAtoms();
   const dispatch = useSetAtom(composeAtom);
   const isWhisper = useAtomValue(isWhisperAtom);
   const isBroadcast = useAtomValue(broadcastAtom);
   const isMute = !isBroadcast || isWhisper;
+  let tooltip: ReactNode = intl.formatMessage({
+    defaultMessage: 'Whether broadcast your input preview.',
+  });
+  if (isWhisper) {
+    tooltip = (
+      <>
+        <Icon icon={TriangleAlert} className="mr-1" />
+        {intl.formatMessage({ defaultMessage: 'Will not broadcast when whispering.' })}
+      </>
+    );
+  }
   return (
     <ToolbarButton
-      disabled={isWhisper}
       active={isMute}
+      tooltip={tooltip}
       onClick={() => dispatch({ type: 'toggleBroadcast', payload: {} })}
     >
       <Icon icon={TowerBroadcast} className={isMute ? 'opacity-50' : ''} />
-      <FormattedMessage defaultMessage="Mute" />
+      <span className="ml-1">
+        <FormattedMessage defaultMessage="Mute" />
+      </span>
     </ToolbarButton>
   );
 };
 
-const ActionButton = () => {
+const ActionButton: FC<{ intl: IntlShape }> = ({ intl }) => {
   const { isActionAtom, composeAtom } = useChannelAtoms();
   const dispatch = useSetAtom(composeAtom);
   const isAction = useAtomValue(isActionAtom);
+  const tooltip = intl.formatMessage({ defaultMessage: 'Mark as an action.' });
   return (
     <ToolbarButton
       active={isAction}
+      tooltip={tooltip}
       onClick={() => dispatch({ type: 'toggleAction', payload: {} })}
     >
       <Icon icon={PersonRunning} className={isAction ? '' : 'opacity-50'} />
-      <FormattedMessage defaultMessage="Action" />
+      <span className="ml-1">
+        <FormattedMessage defaultMessage="Action" />
+      </span>
     </ToolbarButton>
   );
 };
 
-const SendButton: FC = () => {
+const SendButton: FC<{ intl: IntlShape }> = () => {
   const composeAtom = useComposeAtom();
   const dispatch = useSetAtom(composeAtom);
   const editAtom = useMemo(() => selectAtom(composeAtom, ({ edit }) => edit), [composeAtom]);
@@ -104,56 +139,86 @@ const SendButton: FC = () => {
   const send = useSend();
   return (
     <>
-      <ToolbarButton disabled={composeError != null} onClick={send}>
+      <ToolbarButton
+        disabled={composeError != null}
+        variant="primary"
+        tooltip={
+          composeError &&
+          composeError !== 'TEXT_EMPTY' && (
+            <>
+              <Icon icon={TriangleAlert} className="mr-1" />
+              <ComposeErrorReason error={composeError} />
+            </>
+          )
+        }
+        onClick={send}
+      >
         <Icon icon={editMode ? Edit : PaperPlane} />
-        {editMode ? (
-          <FormattedMessage defaultMessage="Edit" />
-        ) : (
-          <FormattedMessage defaultMessage="Send" />
-        )}
+        <span className="ml-1">
+          {editMode ? (
+            <FormattedMessage defaultMessage="Edit" />
+          ) : (
+            <FormattedMessage defaultMessage="Send" />
+          )}
+        </span>
       </ToolbarButton>
       {editMode && (
         <ToolbarButton onClick={() => dispatch({ type: 'reset', payload: {} })}>
           <Icon icon={X} />
         </ToolbarButton>
       )}
-      {composeError && composeError !== 'TEXT_EMPTY' && (
-        <div className="bg-state-warning-bg border-state-warning-border text-state-warning-text absolute top-0 right-0 z-10 -translate-y-[calc(100%-2px)] rounded-sm border px-2 py-1 text-sm">
-          <Icon icon={TriangleAlert} className="mr-1" />
-          <ComposeErrorReason error={composeError} />
-        </div>
-      )}
     </>
   );
 };
 
-const WhisperButton: FC<{ currentUser: User }> = ({ currentUser }) => {
-  const { isWhisperAtom, composeAtom } = useChannelAtoms();
+const WhisperButton: FC<{ currentUser: User; intl: IntlShape }> = ({ currentUser, intl }) => {
+  const { isWhisperAtom, composeAtom, lastWhisperTargetsAtom } = useChannelAtoms();
   const dispatch = useSetAtom(composeAtom);
   const isWhisper = useAtomValue(isWhisperAtom);
+  const store = useStore();
+  const onClick = () => {
+    const lastWhisperTargets = store.get(lastWhisperTargetsAtom);
+    const usernames =
+      lastWhisperTargets == null || lastWhisperTargets.length === 0
+        ? [currentUser.username]
+        : lastWhisperTargets;
+
+    dispatch({
+      type: 'toggleWhisper',
+      payload: {
+        usernames,
+      },
+    });
+  };
   return (
     <ToolbarButton
       active={isWhisper}
-      onClick={() =>
-        dispatch({ type: 'toggleWhisper', payload: { username: currentUser.username } })
-      }
+      tooltip={intl.formatMessage({ defaultMessage: 'Only visible to selected people.' })}
+      onClick={onClick}
     >
       <Icon icon={Whisper} className={isWhisper ? '' : 'opacity-50'} />
-      <FormattedMessage defaultMessage="Whisper" />
+      <span className="ml-1">
+        <FormattedMessage defaultMessage="Whisper" />
+      </span>
     </ToolbarButton>
   );
 };
 
 export const SelfPreviewToolbar: FC<Props> = ({ currentUser }) => {
-  const whisperButton = useMemo(() => <WhisperButton currentUser={currentUser} />, [currentUser]);
-  const muteButton = useMemo(() => <MuteButton />, []);
-  const actionButton = useMemo(() => <ActionButton />, []);
-  const sendButton = useMemo(() => <SendButton />, []);
+  const intl = useIntl();
+  const whisperButton = useMemo(
+    () => <WhisperButton intl={intl} currentUser={currentUser} />,
+    [currentUser, intl],
+  );
+  const muteButton = useMemo(() => <MuteButton intl={intl} />, [intl]);
+  const actionButton = useMemo(() => <ActionButton intl={intl} />, [intl]);
+  const sendButton = useMemo(() => <SendButton intl={intl} />, [intl]);
   return (
-    <div className="relative flex justify-end gap-1">
+    <div className="SelfPreviewToolbar pr-message-small @2xl:pr-message relative flex w-full justify-start gap-1 text-sm">
+      {actionButton}
       {whisperButton}
       {muteButton}
-      {actionButton}
+      <span className="grow" />
       {sendButton}
     </div>
   );

@@ -1,33 +1,14 @@
-import { type Channel } from '@boluo/api';
 import { Drama, Hash } from '@boluo/icons';
 import { atom } from 'jotai';
 import { type FC, useMemo } from 'react';
+import { ChannelName } from './ChannelName';
 import { useChannelId } from '../../hooks/useChannelId';
 import { PaneHeaderBox } from '../PaneHeaderBox';
 import { ChannelHeaderExtra } from './ChannelHeaderExtra';
 import { ChannelHeaderOperations } from './ChannelHeaderOperations';
 import { useChannel } from '../../hooks/useChannel';
-import { FormattedMessage } from 'react-intl';
 
-export type ChannelHeaderState = 'DEFAULT' | 'MORE' | 'FILTER' | 'CHARACTER';
-
-const ChannelName: FC<{ channel: Channel | null | undefined }> = ({ channel }) => {
-  if (!channel) {
-    return <span>...</span>;
-  }
-  return (
-    <span className="overflow-hidden overflow-ellipsis whitespace-nowrap">
-      {!channel.isPublic ? (
-        <span className="text-text-muted mr-1">
-          [<FormattedMessage defaultMessage="Secret" />]
-        </span>
-      ) : (
-        ''
-      )}
-      {channel.name}
-    </span>
-  );
-};
+export type ChannelHeaderState = 'DEFAULT' | 'MORE' | 'FILTER' | 'TOPIC';
 
 export const ChannelHeader: FC = () => {
   const channelId = useChannelId();
@@ -41,15 +22,28 @@ export const ChannelHeader: FC = () => {
     }
     return <Hash />;
   }, [channel]);
+  const channelName = useMemo(
+    () => (
+      <ChannelName
+        stateAtom={headerStateAtom}
+        name={channel?.name}
+        topic={channel?.topic}
+        isPublic={channel?.isPublic}
+      />
+    ),
+    [channel, headerStateAtom],
+  );
+  const operators = useMemo(() => {
+    return channel ? (
+      <ChannelHeaderOperations stateAtom={headerStateAtom} channel={channel} />
+    ) : null;
+  }, [channel, headerStateAtom]);
+  const extra = useMemo(() => {
+    return <ChannelHeaderExtra channelId={channelId} stateAtom={headerStateAtom} />;
+  }, [channelId, headerStateAtom]);
   return (
-    <PaneHeaderBox
-      icon={icon}
-      operators={
-        channel ? <ChannelHeaderOperations stateAtom={headerStateAtom} channel={channel} /> : null
-      }
-      extra={<ChannelHeaderExtra channelId={channelId} stateAtom={headerStateAtom} />}
-    >
-      <ChannelName channel={channel} />
+    <PaneHeaderBox icon={icon} operators={operators} extra={extra}>
+      {channelName}
     </PaneHeaderBox>
   );
 };

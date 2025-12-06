@@ -9,7 +9,7 @@ const Card: FC<{ children: ReactNode; className?: string }> = ({ children, class
   return (
     <div
       className={[
-        'bg-surface-raised border-border-raised shadow-1/2 shadow-elevation-raised-shadow max-w-lg rounded-sm border p-6',
+        'bg-surface-raised border-border-raised shadow-1/2 max-w-lg rounded-sm border p-6',
         className,
       ].join(' ')}
     >
@@ -83,7 +83,7 @@ export default async function Page({ params }: { params: Promise<Params> }) {
         <Para className="text-sm">
           {intl.formatMessage({
             defaultMessage:
-              'This is latest version of Boluo, which is still under active development. If you perfer the legacy version, please visit',
+              'This is the latest version of Boluo, which is still under active development. If you prefer the legacy version, please visit',
           })}{' '}
           <Link className={classes.link} href="https://oldboluo.kagangtuya.top">
             old.boluo.chat

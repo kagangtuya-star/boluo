@@ -10,8 +10,8 @@ import { useQueryAppSettings } from '@boluo/common/hooks/useQueryAppSettings';
 
 interface Props {
   userId: string;
-  avatar: string | File | null;
-  onChange: (avatar: string | File | null) => void;
+  avatar: string | File | null | undefined;
+  onChange: (avatar: string | File | null | undefined) => void;
 }
 
 // See: https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Image_types
@@ -68,11 +68,11 @@ export const EditAvatar: FC<Props> = ({ userId, avatar, onChange }) => {
           ref={fileInputRef}
         />
         {avatar != null && (
-          <Button type="button" data-small aria-label={removeAvatarLabel} onClick={removeAvatar}>
+          <Button type="button" small aria-label={removeAvatarLabel} onClick={removeAvatar}>
             <X />
           </Button>
         )}
-        <Button type="button" data-small aria-label={changeAvatarLabel} onClick={triggerUpload}>
+        <Button type="button" small aria-label={changeAvatarLabel} onClick={triggerUpload}>
           <Upload />
         </Button>
       </div>

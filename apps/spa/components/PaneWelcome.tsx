@@ -8,7 +8,7 @@ import { GreetingHeader } from './GreetingHeader';
 export const PaneWelcome: FC = () => {
   return (
     <PaneBox
-      grow
+      initSizeLevel={1}
       header={
         <PaneHeaderBox>
           <FormattedMessage defaultMessage="Welcome" />
@@ -40,7 +40,7 @@ export const PaneWelcome: FC = () => {
         </p>
         <p className="py-2">
           <FormattedMessage
-            defaultMessage="You can found the source code at {githubUrl}."
+            defaultMessage="You can find the source code at {githubUrl}."
             values={{
               githubUrl: (
                 <a

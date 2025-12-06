@@ -5,7 +5,7 @@
 
 @import './theme.tailwind.css';
 
-@custom-variant pressed (&:is([data-active="true"],:active):not(:disabled));
+@custom-variant pressed (&:is([data-active="true"],[aria-pressed="true"],:active):not(:disabled));
 
 @theme {
   /* Breakpoints */
@@ -19,6 +19,7 @@
   --spacing-sidebar: 16rem;
   --spacing-pane-padding: 2rem;
   --spacing-pane-header: 2.5rem;
+  --spacing-pane-min: 375px;
 
   --spacing-message: 5rem;
   --spacing-message-small: 2rem;
@@ -31,11 +32,12 @@
 
 @layer base {
   html {
+    text-autospace: normal;
     font-size: 16px;
     /* https://github.com/system-fonts/modern-font-stacks#humanist */
     font-family:
       'IBM Plex Sans', Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', source-sans-pro,
-      sans-serif;
+      system-ui, sans-serif;
   }
   html.switching,
   html.switching * {
@@ -97,6 +99,10 @@
 }
 
 @layer utilities {
+  .no-autospace {
+    text-autospace: no-autospace;
+  }
+
   .contain-strict {
     contain: strict;
   }
@@ -111,11 +117,38 @@
     height: 100dvh;
   }
 
+  .text-vertical {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+  }
+
   .select-bg-arrow {
     /* Dropdown indicator inherits the element text color */
     background-image: url('data:image/svg+xml,%3Csvg%20height%3D%2710%27%20width%3D%2710%27%20viewBox%3D%270%200%2016%2016%27%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%3E%3Cpath%20fill%3D%27currentColor%27%20d%3D%27M7.247%2011.14%202.451%205.658C1.885%205.013%202.345%204%203.204%204h9.592a1%201%200%200%201%20.753%201.659l-4.796%205.48a1%201%200%200%201-1.506%200z%27/%3E%3C/svg%3E');
     background-repeat: no-repeat;
     background-position: calc(100% - 0.75rem) center;
+  }
+
+  @keyframes pane-pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-pane-pop-in {
+    animation: pane-pop-in 120ms cubic-bezier(0.2, 0.8, 0.35, 1) both;
+    will-change: transform, opacity;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-pane-pop-in {
+      animation: none;
+    }
   }
 }
 

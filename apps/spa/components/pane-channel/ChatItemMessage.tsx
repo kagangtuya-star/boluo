@@ -1,52 +1,182 @@
-import clsx from 'clsx';
-import { type FC, useEffect, useMemo, useRef } from 'react';
-import { FormattedMessage } from 'react-intl';
-import { type ParseResult } from '../../interpreter/parse-result';
-import { type FailTo, type MessageItem } from '../../state/channel.types';
-import { ChatItemMessageShowWhisper } from './ChatItemMessageShowWhisper';
-import { Content } from './Content';
-import { MessageMedia } from './MessageMedia';
+import {
+  type FC,
+  memo,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { type ParseResult, messageToParsed } from '@boluo/interpreter';
+import { type MessageItem } from '../../state/channel.types';
+import { MessageBox } from '@boluo/ui/chat/MessageBox';
+import { MessageContentBox } from '@boluo/ui/chat/MessageContentBox';
+import { MessageNamePlate } from '@boluo/ui/chat/MessageNamePlate';
+import { ChatItemMessageWhisperIndicator } from './ChatItemMessageWhisperIndicator';
 import { Name } from './Name';
-import { useQueryUser } from '@boluo/common/hooks/useQueryUser';
-import { messageToParsed } from '../../interpreter/to-parsed';
-import { useIsScrolling } from '../../hooks/useIsScrolling';
 import { useReadObserve } from '../../hooks/useReadObserve';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { type Message } from '@boluo/api';
-import { type ReactNode } from 'react';
 import { MessageReorderHandle } from './MessageReorderHandle';
 import { MessageTime } from './MessageTime';
-import { useMember } from '../../hooks/useMember';
-import { Delay } from '../Delay';
+import { ChatItemMessageContent } from './ChatItemMessageContent';
+import { Delay } from '@boluo/ui/Delay';
 import {
   DisplayContext as ToolbarDisplayContext,
   MessageToolbar,
   makeMessageToolbarDisplayAtom,
 } from './MessageToolbar';
-import { useStore } from 'jotai';
-import { stopPropagation } from '@boluo/utils/browser';
+import { useAtomValue, useStore } from 'jotai';
+import { useMember } from '../../hooks/useMember';
 import { useIsInGameChannel } from '../../hooks/useIsInGameChannel';
+import { useIsDragging } from '../../hooks/useIsDragging';
+import { useChannelAtoms } from '../../hooks/useChannelAtoms';
+import { selectAtom } from 'jotai/utils';
 
-export const ChatItemMessage: FC<{
+const LONG_PRESS_DURATION = 300;
+
+const useMessageLongPress = (
+  toolbarDisplayAtom: ReturnType<typeof makeMessageToolbarDisplayAtom>,
+  store: ReturnType<typeof useStore>,
+) => {
+  const [longPressStart, setLongPressStart] = useState<number | null>(null);
+  const longPressTimeoutRef = useRef<number | null>(null);
+  const longPressActivatedToolbarRef = useRef(false);
+
+  const clearLongPressTimeout = useCallback(() => {
+    if (longPressTimeoutRef.current != null) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetLongPressState = useCallback(
+    (hideToolbar = true) => {
+      clearLongPressTimeout();
+      if (hideToolbar && longPressActivatedToolbarRef.current) {
+        store.set(toolbarDisplayAtom, { type: 'HIDDEN' });
+      }
+      longPressActivatedToolbarRef.current = false;
+      setLongPressStart(null);
+    },
+    [clearLongPressTimeout, store, toolbarDisplayAtom],
+  );
+
+  const handlePointerDown = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (document.getSelection()?.toString()) return;
+      if (e.target instanceof Element) {
+        if (e.target.closest('.MessageToolbar') || e.target.closest('.MessageHandleBox')) {
+          return;
+        }
+      }
+      const currentDisplay = store.get(toolbarDisplayAtom);
+      if (currentDisplay.type === 'HIDDEN') {
+        store.set(toolbarDisplayAtom, { type: 'SHOW' });
+        longPressActivatedToolbarRef.current = true;
+      } else {
+        longPressActivatedToolbarRef.current = false;
+      }
+      const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      setLongPressStart(start);
+      clearLongPressTimeout();
+      longPressTimeoutRef.current = window.setTimeout(() => {
+        longPressTimeoutRef.current = null;
+        longPressActivatedToolbarRef.current = false;
+        setLongPressStart(null);
+        store.set(toolbarDisplayAtom, { type: 'MORE' });
+      }, LONG_PRESS_DURATION);
+    },
+    [clearLongPressTimeout, store, toolbarDisplayAtom],
+  );
+
+  const handlePointerUp = useCallback(() => {
+    resetLongPressState();
+  }, [resetLongPressState]);
+  const handlePointerLeave = useCallback(() => {
+    resetLongPressState();
+  }, [resetLongPressState]);
+  const handlePointerCancel = useCallback(() => {
+    resetLongPressState();
+  }, [resetLongPressState]);
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimeout();
+    };
+  }, [clearLongPressTimeout]);
+
+  useEffect(() => {
+    if (longPressStart == null) return;
+    if (typeof document === 'undefined') return;
+    const handleSelectionChange = () => {
+      const selection = document.getSelection();
+      if (selection != null && selection.toString() !== '') {
+        resetLongPressState();
+      }
+    };
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, [longPressStart, resetLongPressState]);
+
+  return {
+    longPressStart,
+    handlePointerDown,
+    handlePointerUp,
+    handlePointerLeave,
+    handlePointerCancel,
+  };
+};
+
+interface Props {
   message: MessageItem;
   className?: string;
   isLast: boolean;
   continuous?: boolean;
   overlay?: boolean;
-}> = ({ message, continuous = false, overlay = false, isLast }) => {
+}
+
+const ChatItemMessageComponent: FC<Props> = ({
+  message,
+  className = '',
+  continuous = false,
+  overlay = false,
+  isLast,
+}) => {
+  const { highlightMessageAtom } = useChannelAtoms();
+  const isHighlightedAtom = useMemo(
+    () => selectAtom(highlightMessageAtom, (id) => id === message.id),
+    [highlightMessageAtom, message.id],
+  );
+  const isHighlighted = useAtomValue(isHighlightedAtom);
+
   const member = useMember();
   const sendBySelf = member?.user.id === message.senderId;
   const iAmMaster = member?.channel.isMaster || false;
-  const isScrolling = useIsScrolling();
-  const { isMaster, isAction } = message;
-  const { data: user } = useQueryUser(message.senderId);
+  const { isMaster, isAction, failTo } = message;
   const readObserve = useReadObserve();
-  const ref = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (ref.current == null) return;
-    return readObserve(ref.current);
-  }, [readObserve]);
+    if (overlay) return;
+    if (contentRef.current == null) return;
+    return readObserve(contentRef.current);
+  }, [overlay, readObserve]);
+  const isInGameChannel = useIsInGameChannel();
+  const isAnyMessageDragging = useIsDragging();
+  const toolbarDisplayAtom = useMemo(() => makeMessageToolbarDisplayAtom(), []);
+  const store = useStore();
+  const messageBoxRef = useRef<HTMLDivElement | null>(null);
+  const {
+    longPressStart,
+    handlePointerDown,
+    handlePointerUp,
+    handlePointerLeave,
+    handlePointerCancel,
+  } = useMessageLongPress(toolbarDisplayAtom, store);
 
   const nameNode = useMemo(
     () => (
@@ -55,108 +185,30 @@ export const ChatItemMessage: FC<{
         name={message.name}
         isMaster={isMaster ?? false}
         self={sendBySelf}
-        user={user}
+        userId={message.senderId}
       />
     ),
-    [message.inGame, message.name, isMaster, sendBySelf, user],
+    [message.inGame, message.name, isMaster, sendBySelf, message.senderId],
   );
+
   const parsed: ParseResult = useMemo(
     (): ParseResult => messageToParsed(message.text, message.entities),
     [message.entities, message.text],
   );
-  const mini = continuous || isAction;
+  const shouldConcealNameOnLeft = continuous || isAction;
+
+  const namePlate = useMemo(() => {
+    return (
+      <MessageNamePlate shouldConcealNameOnLeft={shouldConcealNameOnLeft}>
+        {nameNode}
+      </MessageNamePlate>
+    );
+  }, [shouldConcealNameOnLeft, nameNode]);
   const draggable = sendBySelf || iAmMaster;
-  let media: ReactNode = null;
-  if (message.mediaId != null) {
-    media = <MessageMedia className="pt-2" media={message.mediaId} />;
-  } else if (message.optimisticMedia != null) {
-    media = <MessageMedia className="pt-2" media={message.optimisticMedia} />;
-  }
+  const content = useMemo(() => {
+    return <ChatItemMessageContent message={message} parsed={parsed} nameNode={nameNode} />;
+  }, [message, nameNode, parsed]);
 
-  return (
-    <MessageBox
-      sendBySelf={sendBySelf}
-      inGame={message.inGame ?? false}
-      message={message}
-      draggable={draggable}
-      overlay={overlay}
-      isScrolling={isScrolling}
-      mini={mini}
-      pos={message.pos}
-      failTo={message.failTo}
-    >
-      <div className={clsx('self-start @2xl:text-right', mini ? 'hidden @2xl:block' : '')}>
-        {!mini && <span>{nameNode}:</span>}
-      </div>
-      <div
-        className="pr-message-small @2xl:pr-message"
-        ref={ref}
-        data-read-position={message.pos}
-        data-is-last={isLast}
-      >
-        {media}
-        {message.whisperToUsers != null && (
-          <span className="text-text-secondary text-sm italic">
-            <FormattedMessage defaultMessage="(Whisper)" />
-            {parsed.text === '' && (
-              <ChatItemMessageShowWhisper
-                className="ml-2"
-                messageId={message.id}
-                userIdList={message.whisperToUsers}
-                channelId={message.channelId}
-              />
-            )}
-          </span>
-        )}
-
-        {parsed.text !== '' && (
-          <div>
-            <Content
-              source={parsed.text}
-              entities={parsed.entities}
-              isAction={isAction ?? false}
-              nameNode={nameNode}
-              isArchived={message.folded ?? false}
-              seed={message.seed}
-              onContextMenu={stopPropagation}
-              onDoubleClick={stopPropagation}
-            />
-          </div>
-        )}
-      </div>
-    </MessageBox>
-  );
-};
-
-const MessageBox: FC<{
-  className?: string;
-  children: ReactNode;
-  message: Message;
-  draggable?: boolean;
-  mini?: boolean;
-  overlay?: boolean;
-  sendBySelf: boolean;
-  isScrolling: boolean;
-  inGame: boolean;
-  pos: number;
-  failTo: FailTo | null | undefined;
-}> = ({
-  className = '',
-  inGame,
-  children,
-  draggable = false,
-  overlay = false,
-  message,
-  mini = false,
-  isScrolling,
-  sendBySelf,
-  failTo,
-  pos,
-}) => {
-  const isInGameChannel = useIsInGameChannel();
-  const toolbarDisplayAtom = useMemo(() => makeMessageToolbarDisplayAtom(), []);
-  const store = useStore();
-  const ref = useRef<HTMLDivElement | null>(null);
   const {
     attributes,
     listeners,
@@ -168,17 +220,20 @@ const MessageBox: FC<{
   } = useSortable({
     id: message.id,
     data: { message },
-    disabled: !draggable || isScrolling || failTo != null,
+    disabled: !draggable || failTo != null,
   });
 
-  const setRef = (node: HTMLDivElement | null) => {
-    ref.current = node;
-    setNodeRef(node);
-  };
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      messageBoxRef.current = node;
+      setNodeRef(node);
+    },
+    [setNodeRef],
+  );
 
   const style = useMemo(
     () => ({
-      transform: CSS.Transform.toString(transform),
+      transform: transform ? CSS.Transform.toString(transform) : undefined,
       transition,
     }),
     [transform, transition],
@@ -198,54 +253,52 @@ const MessageBox: FC<{
   const toolbar = useMemo(() => {
     if (isDragging || overlay) return null;
     return (
-      <Delay>
-        <MessageToolbar message={message} messageBoxRef={ref} sendBySelf={sendBySelf} />
+      <Delay fallback={null}>
+        <MessageToolbar
+          message={message}
+          messageBoxRef={messageBoxRef}
+          sendBySelf={sendBySelf}
+          longPressStart={longPressStart}
+          longPressDuration={LONG_PRESS_DURATION}
+        />
       </Delay>
     );
-  }, [isDragging, message, overlay, sendBySelf]);
-  const handleDoubleClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    store.set(toolbarDisplayAtom, { type: 'MORE' });
-  };
-  const handleContextMenu = (e: React.MouseEvent) => {
-    const selection = document.getSelection();
-    if (selection != null && selection.toString() !== '') return;
-    e.preventDefault();
-    store.set(toolbarDisplayAtom, { type: 'MORE' });
-  };
+  }, [isDragging, longPressStart, message, overlay, sendBySelf]);
+  const timestamp = useMemo(
+    () => <MessageTime message={message} failTo={failTo} />,
+    [failTo, message],
+  );
   return (
     <ToolbarDisplayContext value={toolbarDisplayAtom}>
-      <div
-        data-overlay={overlay}
-        data-in-game={inGame}
-        data-pos={pos}
-        className={clsx(
-          'group/msg data relative grid grid-flow-col items-center gap-2 py-2 pr-2 pl-2',
-          'grid-cols-[1.5rem_minmax(0,1fr)]',
-          '@2xl:grid-cols-[1.5rem_12rem_minmax(0,1fr)]',
-          !mini && 'grid-rows-[auto_auto] @2xl:grid-rows-1',
-          inGame
-            ? 'bg-message-inGame-bg'
-            : [
-                'bg-surface-default',
-                isInGameChannel ? 'text-text-secondary hover:text-text-primary text-sm' : '',
-              ],
-          'data-[overlay=true]:shadow-lg',
-          isDragging && 'opacity-0',
-          className,
-        )}
-        ref={setRef}
+      <MessageBox
+        inGame={message.inGame ?? false}
+        pos={message.pos}
+        continued={shouldConcealNameOnLeft}
+        highlighted={isHighlighted}
+        lifting={overlay}
+        isInGameChannel={isInGameChannel}
+        isDragging={isDragging}
+        disableHoverEffect={isAnyMessageDragging}
         style={style}
-        onDoubleClick={handleDoubleClick}
-        onContextMenu={handleContextMenu}
+        setRef={setRef}
+        handlePointerDown={handlePointerDown}
+        handlePointerUp={handlePointerUp}
+        handlePointerLeave={handlePointerLeave}
+        handlePointerCancel={handlePointerCancel}
+        className={className}
+        timestamp={timestamp}
+        toolbar={toolbar}
       >
         {handle}
-        {children}
-        <div className="absolute top-1 right-2 select-none">
-          <MessageTime message={message} failTo={failTo} />
-        </div>
-        {toolbar}
-      </div>
+        {namePlate}
+        <MessageContentBox ref={contentRef} pos={message.pos} isLast={isLast}>
+          <ChatItemMessageWhisperIndicator message={message} parsed={parsed} />
+          {content}
+        </MessageContentBox>
+      </MessageBox>
     </ToolbarDisplayContext>
   );
 };
+
+export const ChatItemMessage = memo(ChatItemMessageComponent);
+ChatItemMessage.displayName = 'ChatItemMessage';
